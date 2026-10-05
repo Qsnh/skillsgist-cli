@@ -1,0 +1,58 @@
+import { unzipSync } from "fflate";
+import { CliError } from "./errors.js";
+
+export type SkillFiles = Map<string, Uint8Array>;
+
+export interface ArchiveLimits {
+  maxFiles: number;
+  maxBytes: number;
+}
+
+export const DEFAULT_LIMITS: ArchiveLimits = { maxFiles: 1000, maxBytes: 50 * 1024 * 1024 };
+
+const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
+
+export function isSafeArchivePath(path: string): boolean {
+  if (path === "" || path.startsWith("/") || path.includes("\\") || path.includes("\0") || /^[a-zA-Z]:/.test(path)) return false;
+  return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+export function hasNameAndDescription(skillMd: string): boolean {
+  const block = FRONTMATTER.exec(skillMd.replace(/^﻿/, ""))?.[1];
+  if (block === undefined) return false;
+  return /^name:[ \t]*\S/m.test(block) && /^description:[ \t]*\S/m.test(block);
+}
+
+export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimits = DEFAULT_LIMITS): SkillFiles {
+  const scan = { files: 0, bytes: 0, problem: null as string | null };
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(bytes, {
+      filter(file) {
+        if (scan.problem !== null || file.name.endsWith("/")) return false;
+        scan.files += 1;
+        scan.bytes += file.originalSize;
+        if (!isSafeArchivePath(file.name)) scan.problem = `unsafe path ${JSON.stringify(file.name)}`;
+        else if (scan.files > limits.maxFiles) scan.problem = `more than ${limits.maxFiles} files`;
+        else if (scan.bytes > limits.maxBytes) scan.problem = `more than ${limits.maxBytes} bytes unpacked`;
+        return scan.problem === null;
+      },
+    });
+  } catch {
+    throw new CliError(`${name}: the archive is not a valid zip file`);
+  }
+  if (scan.problem !== null) throw new CliError(`${name}: the archive has ${scan.problem}`);
+  const files: SkillFiles = new Map();
+  let total = 0;
+  for (const [path, data] of Object.entries(entries)) {
+    total += data.length;
+    files.set(path, data);
+  }
+  if (total > limits.maxBytes) throw new CliError(`${name}: the archive has more than ${limits.maxBytes} bytes unpacked`);
+  const skillMd = files.get("SKILL.md");
+  if (skillMd === undefined) throw new CliError(`${name}: the archive has no SKILL.md at its root`);
+  if (!hasNameAndDescription(new TextDecoder().decode(skillMd))) {
+    throw new CliError(`${name}: SKILL.md has no name and description in its frontmatter`);
+  }
+  return files;
+}
