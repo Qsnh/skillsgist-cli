@@ -1,0 +1,42 @@
+{
+  "name": "skillsgist",
+  "version": "0.1.0",
+  "description": "Install Agent Skills from a skillsgist registry without storing its install key.",
+  "keywords": [
+    "agent-skills",
+    "skills",
+    "skillsgist",
+    "claude-code",
+    "codex",
+    "cursor",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "Qsnh",
+  "type": "module",
+  "bin": {
+    "skillsgist": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && vitest run",
+    "prepublishOnly": "npm test"
+  },
+  "dependencies": {
+    "@clack/prompts": "1.8.1",
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.43",
+    "typescript": "7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "5.0.3"
+  }
+}
