@@ -113,8 +113,8 @@ async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, 
     }
     return pick(options.agents);
   }
-  if (running.inAgent) return withUniversal(running.id === null ? [] : pick([running.id]));
   const installed = agents.filter((agent) => agent.installed);
+  if (running.inAgent) return withUniversal(running.id === null ? installed : pick([running.id]));
   if (installed.length === 0) {
     if (yes) return universal;
     const chosen = await ui.selectAgents({ choices: agents, initial: DEFAULT_AGENTS, locked: [] });

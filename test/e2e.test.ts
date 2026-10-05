@@ -80,7 +80,7 @@ describe("skillsgist add", () => {
     const result = await run(
       box,
       ["add", `${registry.origin}/i/${KEY}/.well-known/agent-skills/demo-skill`, "--skill", "demo-skill", "-g", "-y"],
-      { CLAUDECODE: "1" },
+      { CLAUDECODE: "1", AI_AGENT: "claude-code_2-1-280_harness" },
     );
     expect(result.code).toBe(0);
     expect(result.output).toMatch(/✓ ~\/\.agents\/skills\/demo-skill\b/);

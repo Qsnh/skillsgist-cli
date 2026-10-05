@@ -99,6 +99,20 @@ describe("runAdd", () => {
     expect(filesContaining(box.home, KEY)).toEqual([]);
   });
 
+  it("links the detected agents and the universal directory inside an agent it does not know", async () => {
+    const box = sandbox({ AI_AGENT: "v0" }, false);
+    mkdirSync(join(box.home, ".claude"));
+    const ui = fakeUi();
+    expect(await runAdd(url, options({ skills: ["demo-skill"], global: true, yes: true }), box.context(ui.ui))).toBe(0);
+    expect(ui.asked).toEqual([]);
+    expect(ui.text()).toContain("An agent detected");
+    expect(existsSync(join(box.home, ".agents/skills/demo-skill/SKILL.md"))).toBe(true);
+    expect(lstatSync(join(box.home, ".claude/skills/demo-skill")).isSymbolicLink()).toBe(true);
+    expect(ui.text()).toContain("symlinked: Claude Code");
+    expect(ui.text()).not.toContain(KEY);
+    expect(filesContaining(box.home, KEY)).toEqual([]);
+  });
+
   it("lists skills without installing or needing a terminal", async () => {
     const box = sandbox({}, false);
     const ui = fakeUi();

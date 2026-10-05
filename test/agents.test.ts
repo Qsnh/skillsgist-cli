@@ -80,7 +80,12 @@ describe("detectRunningAgent", () => {
     [{ REPL_ID: "r" }, "replit"],
     [{ AI_AGENT: "claude-code" }, "claude-code"],
     [{ AI_AGENT: "github-copilot-cli" }, "github-copilot"],
+    [{ AI_AGENT: "claude-code_2-1-280_harness", CLAUDECODE: "1" }, "claude-code"],
+    [{ AI_AGENT: "claude-code_2-1-280_agent" }, "claude-code"],
+    [{ AI_AGENT: "github-copilot-cli/1.0" }, "github-copilot"],
+    [{ AI_AGENT: "v0", CLAUDECODE: "1" }, "claude-code"],
     [{ AI_AGENT: "v0" }, null],
+    [{ AI_AGENT: "v0", CURSOR_TRACE_ID: "t" }, null],
   ])("maps %j to %s", (env, id) => {
     expect(detectRunningAgent(env, none)).toEqual({ inAgent: true, id });
   });

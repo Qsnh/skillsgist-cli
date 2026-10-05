@@ -123,6 +123,7 @@ All requests use `fetch` with `redirect: "error"` and a 30-second timeout (`Abor
    - Otherwise, a multiselect prompt.
 4. **Agents.**
    - If the CLI runs inside a known agent (see Running-agent detection), `-y` is implied, and when `-a` is absent the targets are that agent plus the universal agents.
+   - If it runs inside an agent it cannot name (an `AI_AGENT` value that maps to no agent, and no other signal matches), `-y` is implied too, and when `-a` is absent the targets are the detected installed agents plus the universal agents.
    - `-a '*'` targets every agent. `-a <ids>` targets those agents; an unknown id is an error listing the valid ids.
    - Otherwise, detect installed agents:
      - None found: with `-y`, the universal agents only (`npx skills` would target all agents here). Without `-y`, a multiselect over all agents with `claude-code`, `opencode` and `codex` preselected.
@@ -135,7 +136,7 @@ All requests use `fetch` with `redirect: "error"` and a 30-second timeout (`Abor
 7. **Download.** For each selected skill, download the artifact, check its sha256 against `digest`, and unpack it in memory. Any failure aborts the whole run before anything is written.
 8. **Install.** See Installation. Then print the result.
 
-Without a TTY on stdin, without `-y`, and not inside a known agent, the run fails with a message to add `-y`.
+Without a TTY on stdin, without `-y`, and not inside an agent, the run fails with a message to add `-y`.
 
 ## Installation
 
@@ -215,7 +216,7 @@ Checked in this order, as in `@vercel/detect-agent`, which 1.5.18 bundles:
 
 | Signal | Agent |
 |---|---|
-| `AI_AGENT` | its value |
+| `AI_AGENT` | its value up to the first `_` or `/` (`claude-code_2-1-280_harness` → claude-code), if that names an agent |
 | `CURSOR_TRACE_ID` | cursor |
 | `CURSOR_AGENT`, or `CURSOR_EXTENSION_HOST_ROLE=agent-exec` | cursor |
 | `GEMINI_CLI` | gemini-cli |
@@ -231,7 +232,8 @@ Checked in this order, as in `@vercel/detect-agent`, which 1.5.18 bundles:
 Notes:
 
 - A plain `CURSOR_TRACE_ID` without the strong Cursor signal is treated as "not in an agent", as 1.5.18 does.
-- An `AI_AGENT` value that is not a known agent id is still treated as being in an agent, with the universal agents as the only targets.
+- `AI_AGENT` names an agent when its normalised value is a known agent id or one of the names `@vercel/detect-agent` reports (`claude`, `cowork`, `cursor-cli`, `gemini`, `augment-cli`, `github-copilot-cli`, ...). A value that names no agent does not stop the checks: the remaining signals are checked in order, so `AI_AGENT=v0` with `CLAUDECODE=1` resolves to claude-code.
+- If no signal names an agent but `AI_AGENT` is set, the CLI is still treated as being in an agent, and the targets are the detected installed agents plus the universal agents.
 
 ## Testing
 
@@ -252,7 +254,7 @@ A local HTTP server serves an index and zip artifacts and records every request.
 
 Scenarios:
 
-- `-g -y` with `CLAUDECODE=1`
+- `-g -y` with `CLAUDECODE=1` and `AI_AGENT=claude-code_2-1-280_harness`, as Claude Code sets them
 - project `-y`
 - `--copy`
 - `-s` filtering

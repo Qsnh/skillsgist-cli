@@ -196,9 +196,18 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
   });
 }
 
+function declaredAgentName(env: NodeJS.ProcessEnv): string | null {
+  const value = env.AI_AGENT?.trim();
+  return value ? value.split(/[_/]/)[0] : null;
+}
+
+function runningAgentId(name: string): string | null {
+  return RUNNING_AGENT_IDS[name] ?? (AGENTS.some((agent) => agent.id === name) ? name : null);
+}
+
 function runningAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | null {
-  const declared = env.AI_AGENT?.trim();
-  if (declared) return declared;
+  const declared = declaredAgentName(env);
+  if (declared !== null && runningAgentId(declared) !== null) return declared;
   if (env.CURSOR_TRACE_ID) return "cursor";
   if (env.CURSOR_AGENT || env.CURSOR_EXTENSION_HOST_ROLE === "agent-exec") return "cursor-cli";
   if (env.GEMINI_CLI) return "gemini";
@@ -215,9 +224,9 @@ function runningAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | null
 
 export function detectRunningAgent(env: NodeJS.ProcessEnv, exists: Exists = existsSync): RunningAgent {
   const name = runningAgentName(env, exists);
-  if (name === null) return { inAgent: false, id: null };
   const strongCursor = Boolean(env.CURSOR_AGENT?.trim()) || env.CURSOR_EXTENSION_HOST_ROLE === "agent-exec";
-  if ((name === "cursor" || name === "cursor-cli") && !strongCursor) return { inAgent: false, id: null };
-  const id = RUNNING_AGENT_IDS[name] ?? (AGENTS.some((agent) => agent.id === name) ? name : null);
-  return { inAgent: true, id };
+  const weakCursor = (name === "cursor" || name === "cursor-cli") && !strongCursor;
+  if (name !== null && !weakCursor) return { inAgent: true, id: runningAgentId(name) };
+  const declared = declaredAgentName(env);
+  return { inAgent: declared !== null && runningAgentId(declared) === null, id: null };
 }
