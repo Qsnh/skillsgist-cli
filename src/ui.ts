@@ -25,8 +25,8 @@ export function clackUi(): Ui {
     async selectSkills(skills: SkillEntry[]) {
       const chosen = settle<string[]>(
         await clack.multiselect({
-          message: "Select skills to install",
-          options: skills.map((skill) => ({ value: skill.name, label: skill.name, hint: hint(skill.description) })),
+          message: redact("Select skills to install"),
+          options: skills.map((skill) => ({ value: skill.name, label: redact(skill.name), hint: redact(hint(skill.description)) })),
           required: true,
         }),
       );
@@ -34,25 +34,25 @@ export function clackUi(): Ui {
     },
     async selectAgents(request: AgentRequest) {
       if (request.locked.length > 0) {
-        clack.log.info(`Universal (.agents/skills), always included: ${request.locked.map((agent) => agent.displayName).join(", ")}`);
+        clack.log.info(redact(`Universal (.agents/skills), always included: ${request.locked.map((agent) => agent.displayName).join(", ")}`));
       }
       return settle<string[]>(
         await clack.autocompleteMultiselect({
-          message: "Which agents do you want to install to?",
-          options: request.choices.map((agent) => ({ value: agent.id, label: agent.displayName, hint: agent.skillsDir })),
+          message: redact("Which agents do you want to install to?"),
+          options: request.choices.map((agent) => ({ value: agent.id, label: redact(agent.displayName), hint: redact(agent.skillsDir) })),
           initialValues: request.initial,
           required: request.locked.length === 0,
-          placeholder: "Type to search",
+          placeholder: redact("Type to search"),
         }),
       );
     },
     async selectScope() {
       return settle<boolean>(
         await clack.select({
-          message: "Installation scope",
+          message: redact("Installation scope"),
           options: [
-            { value: false, label: "Project", hint: "Install in the current directory" },
-            { value: true, label: "Global", hint: "Install in your home directory" },
+            { value: false, label: redact("Project"), hint: redact("Install in the current directory") },
+            { value: true, label: redact("Global"), hint: redact("Install in your home directory") },
           ],
         }),
       );
