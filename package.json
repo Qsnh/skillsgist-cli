@@ -11,6 +11,14 @@
     "cursor",
     "cli"
   ],
+  "homepage": "https://github.com/Qsnh/skillsgist-cli#readme",
+  "bugs": {
+    "url": "https://github.com/Qsnh/skillsgist-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Qsnh/skillsgist-cli.git"
+  },
   "license": "MIT",
   "author": "Qsnh",
   "type": "module",
@@ -24,7 +32,7 @@
     "node": ">=20.12"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && vitest run",
     "prepublishOnly": "npm test"
