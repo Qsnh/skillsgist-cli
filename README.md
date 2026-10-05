@@ -11,7 +11,7 @@ npx skillsgist add https://skills.example.com/i/<install_key>
 `npx skills add` works with a skillsgist registry. But a skillsgist install key lives in the URL, and `npx skills` 1.5 does not keep that URL to itself:
 
 - a global install writes it to `~/.agents/.skill-lock.json`;
-- its telemetry sends it to `add-skill.vercel.sh` unless `DO_NOT_TRACK` is set;
+- its telemetry sends it to `add-skill.vercel.sh` unless `DO_NOT_TRACK` or `DISABLE_TELEMETRY` is set;
 - a bare `https://host/i/<key>` is looked up on `api.github.com`;
 - it prints the full URL.
 

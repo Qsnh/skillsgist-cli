@@ -278,7 +278,7 @@ Done in the `skillsgist` repo as part of this work. The registry protocol does n
    - The agent prompt command becomes `npx -y skillsgist add <url> --skill <slug> -g -y`.
    - The anonymous hero names `npx skillsgist`.
 2. `src/views/projects.tsx`: both install commands become `npx skillsgist add ...`.
-3. `src/i18n/en.ts`, `zh-CN.ts`, `zh-TW.ts`, `ja.ts`: rewrite `commandKeyNote`. It should say that the command carries your install key for the project; that skillsgist does not store it, but shell history and agent transcripts may; to keep it out of shared chats; and to reset the key in the settings if it leaks. English first, then the three translations (Taiwan wording for zh-TW).
+3. `src/i18n/en.ts`, `zh-CN.ts`, `zh-TW.ts`, `ja.ts`: rewrite `commandKeyNote`. It should say that the command carries your install key for the project; that skillsgist does not store it, but shell history, npm's logs and agent transcripts may (with a pointer that `npx --logs-max=0` skips npm's logs); to keep it out of shared chats; and to reset the key in the settings if it leaks. English first, then the three translations (Taiwan wording for zh-TW).
 4. `test/`: update the assertions in `projects.test.ts`, `skills.test.ts`, `i18n.test.ts` and `users.test.ts`.
 5. `scripts/verify-cli.mjs`:
    - The protocol contract checks keep running the real `npx skills`.
