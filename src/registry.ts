@@ -54,7 +54,10 @@ export async function fetchIndex(source: Source, options: FetchOptions = {}): Pr
       await res.body?.cancel();
       continue;
     }
-    if (!res.ok) throw new CliError(`${redact(url)} answered HTTP ${res.status}`);
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new CliError(`${redact(url)} answered HTTP ${res.status}`);
+    }
     let body: unknown;
     try {
       body = await res.json();
@@ -85,6 +88,28 @@ function entryProblem(entry: Record<string, unknown>, indexUrl: string, origin: 
   return null;
 }
 
+async function readCapped(res: Response, name: string): Promise<Uint8Array> {
+  if (Number(res.headers.get("content-length") ?? 0) > MAX_ARTIFACT_BYTES) {
+    await res.body?.cancel();
+    throw new CliError(`${name} is larger than ${MAX_ARTIFACT_BYTES} bytes`);
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    if (res.body) {
+      for await (const chunk of res.body) {
+        total += chunk.length;
+        if (total > MAX_ARTIFACT_BYTES) throw new CliError(`${name} is larger than ${MAX_ARTIFACT_BYTES} bytes`);
+        chunks.push(chunk);
+      }
+    }
+  } catch (err) {
+    if (err instanceof CliError) throw err;
+    throw new CliError(`Downloading ${name} failed: ${redact(reason(err))}`);
+  }
+  return new Uint8Array(Buffer.concat(chunks));
+}
+
 export function parseIndex(body: unknown, indexUrl: string, origin: string): Index {
   const record = body as { $schema?: unknown; skills?: unknown } | null;
   if (record === null || typeof record !== "object" || record.$schema !== DISCOVERY_SCHEMA || !Array.isArray(record.skills)) {
@@ -112,17 +137,11 @@ export function parseIndex(body: unknown, indexUrl: string, origin: string): Ind
 
 export async function downloadArtifact(entry: SkillEntry, options: FetchOptions = {}): Promise<Uint8Array> {
   const res = await request(entry.url, options);
-  if (!res.ok) throw new CliError(`Downloading ${entry.name} failed: HTTP ${res.status}`);
-  if (Number(res.headers.get("content-length") ?? 0) > MAX_ARTIFACT_BYTES) {
-    throw new CliError(`${entry.name} is larger than ${MAX_ARTIFACT_BYTES} bytes`);
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw new CliError(`Downloading ${entry.name} failed: HTTP ${res.status}`);
   }
-  let bytes: Uint8Array;
-  try {
-    bytes = new Uint8Array(await res.arrayBuffer());
-  } catch (err) {
-    throw new CliError(`Downloading ${entry.name} failed: ${redact(reason(err))}`);
-  }
-  if (bytes.length > MAX_ARTIFACT_BYTES) throw new CliError(`${entry.name} is larger than ${MAX_ARTIFACT_BYTES} bytes`);
+  const bytes = await readCapped(res, entry.name);
   const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   if (digest !== entry.digest) throw new CliError(`${entry.name} does not match its sha256 digest`);
   return bytes;

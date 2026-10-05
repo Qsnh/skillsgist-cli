@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { DISCOVERY_SCHEMA, downloadArtifact, fetchIndex, indexCandidates, parseIndex } from "../src/registry.js";
+import { DISCOVERY_SCHEMA, MAX_ARTIFACT_BYTES, downloadArtifact, fetchIndex, indexCandidates, parseIndex } from "../src/registry.js";
 import { parseSource } from "../src/source.js";
 import { KEY, publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
 
@@ -158,5 +158,37 @@ describe("downloadArtifact", () => {
     );
     expect(message).toMatch(/HTTP 404/);
     expect(message).not.toContain(KEY);
+  });
+
+  it("rejects an artifact larger than the cap even without a Content-Length header", async () => {
+    const oversized = new Uint8Array(MAX_ARTIFACT_BYTES + 1);
+    registry.routes.set(`/i/${KEY}/d/demo-skill/large.zip`, { body: oversized, type: "application/zip" });
+    const message = await failure(
+      downloadArtifact({
+        name: "demo-skill",
+        description: "Demo.",
+        url: `${registry.origin}/i/${KEY}/d/demo-skill/large.zip`,
+        digest: `sha256:${"0".repeat(64)}`,
+      }),
+    );
+    expect(message).toMatch(/larger than/);
+  });
+
+  it("rejects an artifact whose Content-Length is over the cap before reading it", async () => {
+    const oversized = new Uint8Array(MAX_ARTIFACT_BYTES + 1);
+    registry.routes.set(`/i/${KEY}/d/demo-skill/large.zip`, {
+      body: oversized,
+      type: "application/zip",
+      headers: { "content-length": String(MAX_ARTIFACT_BYTES + 1) },
+    });
+    const message = await failure(
+      downloadArtifact({
+        name: "demo-skill",
+        description: "Demo.",
+        url: `${registry.origin}/i/${KEY}/d/demo-skill/large.zip`,
+        digest: `sha256:${"0".repeat(64)}`,
+      }),
+    );
+    expect(message).toMatch(/larger than/);
   });
 });
