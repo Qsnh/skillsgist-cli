@@ -126,7 +126,7 @@ All requests use `fetch` with `redirect: "error"` and a 30-second timeout (`Abor
    - If it runs inside an agent it cannot name (an `AI_AGENT` value that maps to no agent, and no other signal matches), `-y` is implied too, and when `-a` is absent the targets are the detected installed agents plus the universal agents.
    - `-a '*'` targets every agent. `-a <ids>` targets those agents; an unknown id is an error listing the valid ids.
    - Otherwise, detect installed agents:
-     - None found: with `-y`, the universal agents only (`npx skills` would target all agents here). Without `-y`, a multiselect over all agents with `claude-code`, `opencode` and `codex` preselected.
+     - None found: with `-y`, the universal agents only (`npx skills` would target all agents here). Without `-y`, a multiselect over all agents except `eve`, with `claude-code`, `opencode` and `codex` preselected.
      - One found, or `-y`: that agent (or those agents) plus the universal agents.
      - Two or more found, interactive: a multiselect where the universal agents form a locked, always-included group and the detected agents are preselected.
    - No choice is remembered between runs.

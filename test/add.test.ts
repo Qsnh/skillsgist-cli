@@ -135,6 +135,7 @@ describe("runAdd", () => {
     expect(ui.asked).toEqual(["skills", "agents", "scope", "confirm"]);
     expect(ui.requests[0].initial).toEqual(["claude-code", "opencode", "codex"]);
     expect(ui.requests[0].locked).toEqual([]);
+    expect(ui.requests[0].choices.some((agent) => agent.id === "eve")).toBe(false);
     expect(readlinkSync(join(box.cwd, ".claude/skills/other-skill"))).toBe("../../.agents/skills/other-skill");
     expect(ui.text()).toContain("✓ ./.agents/skills/other-skill");
   });
