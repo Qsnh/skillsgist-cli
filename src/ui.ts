@@ -26,7 +26,7 @@ export function clackUi(): Ui {
       const chosen = settle<string[]>(
         await clack.multiselect({
           message: redact("Select skills to install"),
-          options: skills.map((skill) => ({ value: skill.name, label: redact(skill.name), hint: redact(hint(skill.description)) })),
+          options: skills.map((skill) => ({ value: skill.name, label: redact(skill.name), hint: hint(redact(skill.description)) })),
           required: true,
         }),
       );
