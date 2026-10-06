@@ -26,9 +26,7 @@ interface AgentDef {
   detect: (p: AgentPaths, exists: Exists) => boolean;
   hiddenInPrompt?: boolean;
   unlisted?: boolean;
-  pickable?: boolean;
   projectOwned?: boolean;
-  ownCopy?: boolean;
 }
 
 export interface Agent {
@@ -39,9 +37,7 @@ export interface Agent {
   canonical: boolean;
   universal: boolean;
   hidden: boolean;
-  pickable: boolean;
   projectOwned: boolean;
-  ownCopy: boolean;
   installed: boolean;
 }
 
@@ -193,9 +189,7 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
       canonical,
       universal: canonical && def.unlisted !== true,
       hidden: def.hiddenInPrompt === true,
-      pickable: def.pickable !== false,
       projectOwned: def.projectOwned === true,
-      ownCopy: def.ownCopy === true,
       installed: def.detect(paths, exists),
     };
   });

@@ -1,7 +1,7 @@
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { canonicalSkillsRoot, loadAgents, skillsRoot, type Agent, type AgentEnvironment, type Scope } from "./agents.js";
-import { ownCopySkillName, skillName } from "./archive.js";
+import { skillName } from "./archive.js";
 import { CliError } from "./errors.js";
 import { homePath } from "./paths.js";
 import { oneLine, printable, redact } from "./source.js";
@@ -84,7 +84,7 @@ async function realOrResolved(dir: string): Promise<string> {
   }
 }
 
-async function scanDirectory(dir: string, agents: Agent[], ownCopy: boolean): Promise<FoundSkill[]> {
+async function scanDirectory(dir: string, agents: Agent[]): Promise<FoundSkill[]> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -116,7 +116,7 @@ async function scanDirectory(dir: string, agents: Agent[], ownCopy: boolean): Pr
     } catch {
       continue;
     }
-    const name = ownCopy ? ownCopySkillName(contents, entry.name) : skillName(contents);
+    const name = skillName(contents);
     if (name === null) continue;
     found.push({ name, path, agents });
   }
@@ -130,7 +130,7 @@ async function scanScope(scope: Scope, candidates: Agent[], filtered: boolean, s
   for (const dir of order) {
     if (skip.size > 0 && skip.has(await realOrResolved(dir))) continue;
     const dirAgents = dirs.get(dir)!;
-    const found = await scanDirectory(dir, namedAgents(dirAgents, filtered), dirAgents.some((agent) => agent.ownCopy));
+    const found = await scanDirectory(dir, namedAgents(dirAgents, filtered));
     for (const skill of found) {
       const existing = merged.get(skill.name);
       if (existing === undefined) {

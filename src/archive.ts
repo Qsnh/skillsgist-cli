@@ -50,14 +50,6 @@ export function skillName(skillMd: string): string | null {
   return filled(fields.name) && filled(fields.description) ? (fields.name as string) : null;
 }
 
-export function ownCopySkillName(skillMd: string, dirName: string): string | null {
-  const fields = frontmatterFields(skillMd);
-  if (fields === null) return null;
-  if (filled(fields.name) && filled(fields.description)) return fields.name as string;
-  if (!filled(fields.name) && filled(fields.description)) return dirName;
-  return null;
-}
-
 export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimits = DEFAULT_LIMITS): SkillFiles {
   const scan = { files: 0, bytes: 0, problem: null as string | null };
   let entries: Record<string, Uint8Array>;
@@ -94,19 +86,4 @@ export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimi
   }
   if (!valid) throw new CliError(`${name}: SKILL.md has no name and description in its frontmatter`);
   return files;
-}
-
-export function trimFrontmatter(files: SkillFiles): SkillFiles {
-  const { data, body: rest } = parseFrontmatter(new TextDecoder().decode(files.get("SKILL.md")));
-  const body = rest.replace(/^\r?\n/, "");
-  const kept: Record<string, unknown> = {};
-  if (typeof data.description === "string") kept.description = data.description;
-  if (typeof data.license === "string") kept.license = data.license;
-  if (data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)) {
-    const metadata = Object.fromEntries(Object.entries(data.metadata).filter(([, value]) => typeof value === "string"));
-    if (Object.keys(metadata).length > 0) kept.metadata = metadata;
-  }
-  const lines = Object.entries(kept).map(([key, value]) => `${key}: ${JSON.stringify(value)}`);
-  const trimmed = lines.length === 0 ? body : `---\n${lines.join("\n")}\n---\n${body}`;
-  return new Map(files).set("SKILL.md", new TextEncoder().encode(trimmed));
 }

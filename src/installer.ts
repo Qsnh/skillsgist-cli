@@ -2,7 +2,7 @@ import type { Stats } from "node:fs";
 import { lstat, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { canonicalSkillsRoot, skillsRoot, type Agent } from "./agents.js";
-import { trimFrontmatter, type SkillFiles } from "./archive.js";
+import type { SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
 import { within } from "./paths.js";
 
@@ -159,18 +159,15 @@ export async function installSkill(
   }
   const guarded = async (dir: string, agent: Agent | null, action: () => Promise<void>) =>
     (await refusal(dir, agent, canonicalPath, options, where)) ?? (await attempt(action));
-  const filesFor = (agent: Agent) => (agent.ownCopy ? trimFrontmatter(files) : files);
   if (options.copy) {
     const written = new Map<string, string | null>();
     for (const [agent, dir] of targets) {
-      if (!written.has(dir)) written.set(dir, await guarded(dir, agent, () => writeSkill(dir, filesFor(agent))));
+      if (!written.has(dir)) written.set(dir, await guarded(dir, agent, () => writeSkill(dir, files)));
       const error = written.get(dir) ?? null;
       results.push(error !== null ? { agent, status: "failed", path: dir, error } : { agent, status: "copied", path: dir });
     }
     return { name, canonicalPath, agents: results };
   }
-  const linkable = async (agent: Agent, dir: string) =>
-    !agent.ownCopy || (await where.located(dir)) === (await where.located(canonicalPath));
   const canonicalError = await guarded(canonicalPath, null, () => writeSkill(canonicalPath, files));
   for (const [agent, dir] of targets) {
     const error = canonicalError ?? (dir === canonicalPath ? null : await refusal(dir, agent, canonicalPath, options, where));
@@ -178,10 +175,10 @@ export async function installSkill(
       results.push({ agent, status: "failed", path: dir, error });
     } else if (dir === canonicalPath) {
       results.push({ agent, status: "canonical", path: dir });
-    } else if ((await linkable(agent, dir)) && (await attempt(() => linkSkill(canonicalPath, dir))) === null) {
+    } else if ((await attempt(() => linkSkill(canonicalPath, dir))) === null) {
       results.push({ agent, status: "symlinked", path: dir });
     } else {
-      const copyError = await attempt(() => writeSkill(dir, filesFor(agent)));
+      const copyError = await attempt(() => writeSkill(dir, files));
       results.push(copyError !== null ? { agent, status: "failed", path: dir, error: copyError } : { agent, status: "copied", path: dir });
     }
   }

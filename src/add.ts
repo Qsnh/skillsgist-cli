@@ -129,11 +129,11 @@ async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, 
   if (running.inAgent) return select(running.id === null ? installed : pick([running.id]), universal);
   if (installed.length === 0) {
     if (yes) return select([], universal);
-    const chosen = await ui.selectAgents({ choices: agents.filter((agent) => agent.pickable), initial: DEFAULT_AGENTS, locked: [] });
+    const chosen = await ui.selectAgents({ choices: agents, initial: DEFAULT_AGENTS, locked: [] });
     return chosen === CANCELLED ? CANCELLED : select(pick(chosen));
   }
   if (installed.length === 1 || yes) return select(installed, universal);
-  const choices = agents.filter((agent) => !agent.canonical && agent.pickable);
+  const choices = agents.filter((agent) => !agent.canonical);
   const chosen = await ui.selectAgents({
     choices,
     initial: installed.filter((agent) => choices.includes(agent)).map((agent) => agent.id),
@@ -164,8 +164,7 @@ async function summary(skills: SkillEntry[], targets: Agent[], install: InstallO
   const names = (agents: Agent[]) => formatList(agents.map((agent) => agent.displayName));
   const everyone = names(targets);
   const shared = formatList(sharedNames(targets));
-  const linked = names(targets.filter((agent) => !agent.canonical && !agent.ownCopy));
-  const copied = names(targets.filter((agent) => agent.ownCopy));
+  const linked = names(targets.filter((agent) => !agent.canonical));
   const blocks = await Promise.all(
     skills.map(async (skill) => {
       const lines: string[] = [];
@@ -176,7 +175,6 @@ async function summary(skills: SkillEntry[], targets: Agent[], install: InstallO
         lines.push(short(canonicalSkillDir(skill.name, install)));
         if (shared !== "") lines.push(`  universal: ${shared}`);
         if (linked !== "") lines.push(`  symlink → ${linked}`);
-        if (copied !== "") lines.push(`  copy → ${copied}`);
       }
       const [replaced, outside] = await Promise.all([
         replacedDirs(skill.name, targets, install, where),
@@ -238,12 +236,12 @@ function report(results: SkillResult[], install: InstallOptions, ui: Ui): void {
     lines.push(`✓ ${shortPath(result.canonicalPath, install.home, install.cwd)}`);
     const shared = sharedNames(done.filter((agent) => agent.status === "canonical").map((agent) => agent.agent));
     const linked = done.filter((agent) => agent.status === "symlinked").map((agent) => agent.agent.displayName);
-    const copied = done.filter((agent) => agent.status === "copied").map((agent) => agent.agent);
+    const copied = done.filter((agent) => agent.status === "copied").map((agent) => agent.agent.displayName);
     if (shared.length > 0) lines.push(`  universal: ${formatList(shared)}`);
     if (linked.length > 0) lines.push(`  symlinked: ${formatList(linked)}`);
     if (copied.length > 0) {
-      lines.push(`  copied: ${formatList(copied.map((agent) => agent.displayName))}`);
-      fallbacks.push(...copied.filter((agent) => !agent.ownCopy).map((agent) => agent.displayName));
+      lines.push(`  copied: ${formatList(copied)}`);
+      fallbacks.push(...copied);
     }
   }
   if (installed > 0) ui.note(lines.join("\n"), `Installed ${plural(installed, "skill")}`);
