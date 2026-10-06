@@ -8,9 +8,9 @@ Install Agent Skills from a skillsgist registry. The URL and its install key are
 
 Commands:
   add <url>               Install skills from the registry at <url> (also: a, install, i)
-  agents                  List the agents -a accepts and the directories they read
+  agents                  List the agents -a accepts and where add installs for each
 
-Options:
+Options for add:
   -g, --global            Install into your home directory instead of the project
   -a, --agent <ids...>    Agents to install to ('*' for all)
   -s, --skill <names...>  Skills to install ('*' for all)
@@ -18,6 +18,8 @@ Options:
       --copy              Copy into each agent directory instead of symlinking
       --all               Same as -s '*' -a '*' -y
   -l, --list              List the registry's skills without installing
+
+Options:
   -h, --help              Show this help
   -v, --version           Show the version
 `;
@@ -28,13 +30,12 @@ const ADD_COMMANDS = new Set(["add", "a", "install", "i"]);
 const LOOKS_LIKE_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 function parseAgents(rest: string[]): Command {
-  for (const arg of rest) {
-    if (arg === "-h" || arg === "--help") return { kind: "help" };
-    if (arg === "-v" || arg === "--version") return { kind: "version" };
-    if (arg.startsWith("-")) throw new CliError(`Unknown option: ${arg}`, { showUsage: true });
-    throw new CliError(`Unexpected argument: ${arg}`, { showUsage: true });
-  }
-  return { kind: "agents" };
+  const [arg] = rest;
+  if (arg === undefined) return { kind: "agents" };
+  if (arg === "-h" || arg === "--help") return { kind: "help" };
+  if (arg === "-v" || arg === "--version") return { kind: "version" };
+  if (arg.startsWith("-")) throw new CliError(`Unknown option for agents: ${arg}`, { showUsage: true });
+  throw new CliError(`Unexpected argument: ${arg}`, { showUsage: true });
 }
 
 export function parseCommandLine(argv: string[]): Command {

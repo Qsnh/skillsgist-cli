@@ -58,6 +58,12 @@ export interface RunningAgent {
   name: string | null;
 }
 
+export interface Scope {
+  global: boolean;
+  home: string;
+  cwd: string;
+}
+
 function hasDependency(packageJsonPath: string, name: string): boolean {
   try {
     const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
@@ -206,6 +212,16 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
       installed: def.detect(paths, exists),
     };
   });
+}
+
+export function canonicalSkillsRoot(scope: Scope): string {
+  return join(scope.global ? scope.home : scope.cwd, CANONICAL_SKILLS_DIR);
+}
+
+export function skillsRoot(agent: Agent, scope: Scope): string | null {
+  if (scope.global && agent.globalDir === null) return null;
+  if (agent.canonical) return canonicalSkillsRoot(scope);
+  return scope.global ? agent.globalDir : join(scope.cwd, agent.skillsDir);
 }
 
 function declaredAgentName(env: NodeJS.ProcessEnv): string | null {

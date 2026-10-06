@@ -1,9 +1,10 @@
 import type { Stats } from "node:fs";
 import { lstat, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { CANONICAL_SKILLS_DIR, type Agent } from "./agents.js";
+import { basename, dirname, join, relative, sep } from "node:path";
+import { canonicalSkillsRoot, skillsRoot, type Agent } from "./agents.js";
 import { trimFrontmatter, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
+import { within } from "./paths.js";
 
 export interface InstallOptions {
   global: boolean;
@@ -49,14 +50,6 @@ export function sanitizeName(name: string): string {
   );
 }
 
-export function within(base: string, target: string): string | null {
-  const root = resolve(base);
-  const path = resolve(target);
-  if (path === root) return "";
-  const prefix = root.endsWith(sep) ? root : root + sep;
-  return path.startsWith(prefix) ? path.slice(prefix.length) : null;
-}
-
 function isInside(base: string, target: string): boolean {
   const rest = within(base, target);
   return rest !== null && rest !== "";
@@ -69,13 +62,12 @@ function inside(base: string, name: string): string {
 }
 
 export function canonicalSkillDir(name: string, options: InstallOptions): string {
-  return inside(join(options.global ? options.home : options.cwd, CANONICAL_SKILLS_DIR), name);
+  return inside(canonicalSkillsRoot(options), name);
 }
 
 export function agentSkillDir(agent: Agent, name: string, options: InstallOptions): string | null {
-  if (options.global && agent.globalDir === null) return null;
-  if (agent.canonical) return canonicalSkillDir(name, options);
-  return inside(options.global ? (agent.globalDir as string) : join(options.cwd, agent.skillsDir), name);
+  const root = skillsRoot(agent, options);
+  return root === null ? null : inside(root, name);
 }
 
 export function locator(): Locator {

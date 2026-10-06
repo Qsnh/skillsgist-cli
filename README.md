@@ -25,7 +25,6 @@ npx skillsgist add https://skills.example.com/i/<install_key>
 
 ```
 npx skillsgist add <url> [options]
-npx skillsgist agents
 ```
 
 | Option | Meaning |
@@ -37,8 +36,6 @@ npx skillsgist agents
 | `--copy` | Copy into each agent directory instead of symlinking |
 | `--all` | Same as `-s '*' -a '*' -y` |
 | `-l, --list` | List the registry's skills without installing |
-
-`npx skillsgist agents` lists every agent ID `-a` accepts, with the folder each agent reads in a project and the one it reads with `-g`, and ticks the agents found on this machine. It only looks at the local disk.
 
 The URL is any address a skillsgist page shows:
 
@@ -52,6 +49,12 @@ Each skill lands in `.agents/skills/<name>`, or in `~/.agents/skills/<name>` wit
 With `-y`, or inside an agent, a project install fails for an agent rather than write through a symlink that leads out of the project, or replace a folder in `skills/` or `data/skills/` (OpenClaw, AstrBot), where a project keeps its own skills. Eve's `agent/skills/<name>` is replaced either way, as `npx skills` does, even if the project put it there. Without `-y`, the summary shows what will be replaced before you confirm.
 
 Inside a coding agent (Claude Code, Codex, Cursor and others are detected from their environment), `-y` is implied and the agent is added to the targets. If `AI_AGENT` names an agent it does not know, `-y` is still implied, and the agents found on the machine are the targets instead. Cursor's terminal on its own does not count as an agent.
+
+```
+npx skillsgist agents
+```
+
+`agents` takes no options. It lists every agent ID `-a` accepts, with the folder `add` installs that agent's skills into in a project and with `-g`. It ticks the agents detected on this machine or in the current directory, so the ticks can change from one project to the next. Inside an agent, it also says which agents `add` installs for without `-a`. It only reads the local disk.
 
 ## What can still see the key
 

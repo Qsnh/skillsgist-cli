@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { CANCELLED, runAdd, shortPath, type AddContext, type AddOptions, type AgentRequest, type Ui } from "../src/add.js";
+import { CANCELLED, runAdd, type AddContext, type AddOptions, type AgentRequest, type Ui } from "../src/add.js";
 import type { SkillEntry } from "../src/registry.js";
 import { cleanup, filesContaining, sandboxExists, tempDir } from "./helpers/fs.js";
 import { KEY, publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
@@ -406,18 +406,5 @@ describe("runAdd", () => {
     expect(await runAdd(url, options({ skills: ["demo-skill"], agents: ["claude-code"], yes: true }), box.context(ui.ui))).toBe(1);
     expect(ui.text()).toContain("error: Failed to install 1");
     expect(ui.text()).toContain("✗ demo-skill → Claude Code:");
-  });
-});
-
-describe("shortPath", () => {
-  it.each([
-    ["/u/x/.agents/skills/demo", "/u/x", "/w", "~/.agents/skills/demo"],
-    ["/u/x/.agents/skills/demo", "/u/x/", "/w", "~/.agents/skills/demo"],
-    ["/u/x", "/u/x/", "/w", "~"],
-    ["/w/.agents/skills/demo", "/u/x", "/w/", "./.agents/skills/demo"],
-    ["/u/xy/demo", "/u/x", "/w", "/u/xy/demo"],
-    ["/srv/demo", "/", "/w", "~/srv/demo"],
-  ])("shortens %s with home %s and cwd %s", (path, home, cwd, short) => {
-    expect(shortPath(path, home, cwd)).toBe(short);
   });
 });

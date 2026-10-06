@@ -83,11 +83,16 @@ describe("parseCommandLine", () => {
     expect(parseCommandLine(["agents", "-h"])).toEqual({ kind: "help" });
     expect(parseCommandLine(["agents", "--version"])).toEqual({ kind: "version" });
     expect(failure(() => parseCommandLine(["agents", "claude-code"]))).toBe("Unexpected argument: claude-code");
-    expect(failure(() => parseCommandLine(["agents", "--json"]))).toBe("Unknown option: --json");
+    expect(failure(() => parseCommandLine(["agents", "--json"]))).toBe("Unknown option for agents: --json");
+    expect(failure(() => parseCommandLine(["agents", "-g"]))).toBe("Unknown option for agents: -g");
   });
 
-  it("documents the agents command", () => {
+  it("documents the agents command, and lists add's options under add", () => {
     expect(USAGE.split("\n")[0]).toBe("Usage: skillsgist add <url> [options]");
     expect(USAGE).toContain("skillsgist agents");
+    const [, addOptions, shared] = USAGE.split(/^Options for add:$|^Options:$/m);
+    expect(addOptions).toContain("-g, --global");
+    expect(addOptions).toContain("-l, --list");
+    expect(shared.trim().split("\n").map((line) => line.trim().split(/ {2,}/)[0])).toEqual(["-h, --help", "-v, --version"]);
   });
 });

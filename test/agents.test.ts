@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { detectRunningAgent, loadAgents, type Agent } from "../src/agents.js";
+import { detectRunningAgent, loadAgents, skillsRoot, type Agent } from "../src/agents.js";
 import { cleanup, sandboxExists, tempDir } from "./helpers/fs.js";
 
 afterEach(cleanup);
@@ -74,6 +74,30 @@ describe("loadAgents", () => {
     expect(eve()).toBe(false);
     writeFileSync(join(cwd, "package.json"), JSON.stringify({ dependencies: { eve: "1.0.0" } }));
     expect(eve()).toBe(true);
+  });
+});
+
+describe("skillsRoot", () => {
+  const root = (id: string, global: boolean) => skillsRoot(byId(load({ XDG_CONFIG_HOME: "/x" }), id), { global, home: "/h", cwd: "/w" });
+
+  it("puts every agent that reads .agents/skills in the shared folder, even with -g", () => {
+    expect(root("codex", false)).toBe("/w/.agents/skills");
+    expect(root("codex", true)).toBe("/h/.agents/skills");
+    expect(root("opencode", true)).toBe("/h/.agents/skills");
+    expect(root("universal", true)).toBe("/h/.agents/skills");
+  });
+
+  it("uses the other agents' own folders", () => {
+    expect(root("claude-code", false)).toBe("/w/.claude/skills");
+    expect(root("claude-code", true)).toBe("/h/.claude/skills");
+    expect(root("goose", true)).toBe("/x/goose/skills");
+    expect(root("eve", false)).toBe("/w/agent/skills");
+  });
+
+  it("has no global folder for agents that cannot install globally", () => {
+    expect(root("eve", true)).toBeNull();
+    expect(root("promptscript", true)).toBeNull();
+    expect(root("promptscript", false)).toBe("/w/.agents/skills");
   });
 });
 

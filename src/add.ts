@@ -1,4 +1,3 @@
-import { sep } from "node:path";
 import { detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
 import { unpackSkill, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
@@ -8,13 +7,13 @@ import {
   locator,
   outsideDirs,
   replacedDirs,
-  within,
   type AgentResult,
   type InstallOptions,
   type InstalledAgent,
   type Locator,
   type SkillResult,
 } from "./installer.js";
+import { shortPath } from "./paths.js";
 import { downloadArtifact, fetchIndex, type FetchOptions, type SkillEntry } from "./registry.js";
 import { parseSource } from "./source.js";
 
@@ -85,16 +84,6 @@ function plural(count: number, word: string): string {
 
 function formatList(items: string[], max = 5): string {
   return items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
-}
-
-function under(path: string, base: string, mark: string): string | null {
-  const rest = within(base, path);
-  if (rest === null) return null;
-  return rest === "" ? mark : `${mark}${sep}${rest}`;
-}
-
-export function shortPath(path: string, home: string, cwd: string): string {
-  return under(path, home, "~") ?? under(path, cwd, ".") ?? path;
 }
 
 function cancelled(ui: Ui): number {
