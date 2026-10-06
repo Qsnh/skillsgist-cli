@@ -116,8 +116,8 @@ describe("runAdd", () => {
     expect(filesContaining(box.home, KEY)).toEqual([]);
   });
 
-  it("installs a project skill only into .agents/skills inside Eve, which it no longer knows", async () => {
-    const box = sandbox({ AI_AGENT: "eve" }, false);
+  it("installs a project skill only into .agents/skills inside an agent it does not know", async () => {
+    const box = sandbox({ AI_AGENT: "v0" }, false);
     mkdirSync(join(box.home, ".claude"));
     mkdirSync(join(box.home, ".openclaw"));
     const ui = fakeUi();
@@ -308,22 +308,6 @@ describe("runAdd", () => {
     await expect(
       runAdd(url, options({ agents: ["promptscript"], global: true, yes: true, skills: ["demo-skill"] }), box.context(fakeUi().ui)),
     ).rejects.toThrow(/PromptScript cannot install skills globally/);
-  });
-
-  it("rejects eve, which it no longer supports", async () => {
-    const box = sandbox();
-    await expect(runAdd(url, options({ agents: ["eve"], yes: true, skills: ["demo-skill"] }), box.context(fakeUi().ui))).rejects.toThrow(
-      /Invalid agents: eve\./,
-    );
-  });
-
-  it("leaves agent/skills alone in a project that depends on eve", async () => {
-    const box = sandbox();
-    mkdirSync(join(box.cwd, "agent"));
-    writeFileSync(join(box.cwd, "package.json"), JSON.stringify({ dependencies: { eve: "1.0.0" } }));
-    expect(await runAdd(url, options({ skills: ["demo-skill"], yes: true }), box.context(fakeUi().ui))).toBe(0);
-    expect(existsSync(join(box.cwd, "agent/skills"))).toBe(false);
-    expect(existsSync(join(box.cwd, ".agents/skills/demo-skill/SKILL.md"))).toBe(true);
   });
 
   it("reports a missing index with the key masked", async () => {

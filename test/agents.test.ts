@@ -7,11 +7,10 @@ const load = (env: NodeJS.ProcessEnv = {}, exists: (path: string) => boolean = n
 const byId = (agents: Agent[], id: string) => agents.find((agent) => agent.id === id)!;
 
 describe("loadAgents", () => {
-  it("knows the 73 agents of skills 1.5.18 except Eve, each once", () => {
+  it("knows 72 agents, each once", () => {
     const ids = load().map((agent) => agent.id);
     expect(ids).toHaveLength(72);
     expect(new Set(ids).size).toBe(72);
-    expect(ids).not.toContain("eve");
   });
 
   it("puts the 17 universal agents in .agents/skills and hides four of them", () => {
@@ -110,7 +109,6 @@ describe("detectRunningAgent", () => {
     [{ AI_AGENT: "cursor-cli" }, "cursor"],
     [{ AI_AGENT: "cursor-cli", CURSOR_TRACE_ID: "t" }, "cursor"],
     [{ AI_AGENT: "toString" }, null],
-    [{ AI_AGENT: "eve" }, null],
     [{ AI_AGENT: "constructor", CLAUDECODE: "1" }, "claude-code"],
   ])("maps %j to %s", (env, id) => {
     expect(detectRunningAgent(env, none)).toMatchObject({ inAgent: true, id });

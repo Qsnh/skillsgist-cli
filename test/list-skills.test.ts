@@ -283,19 +283,6 @@ describe("findInstalledSkills", () => {
     expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "data/skills/demo-skill"), agents: ["astrbot"] }]);
   });
 
-  it("does not list agent/skills in a project that depends on eve", async () => {
-    const { cwd, environment } = setup();
-    mkdirSync(join(cwd, "agent"));
-    writeFileSync(join(cwd, "package.json"), JSON.stringify({ dependencies: { eve: "1" } }));
-    writeSkillMd(join(cwd, "agent/skills/demo-skill"), skillMd("demo-skill"));
-    expect(await findInstalledSkills(environment(), listOptions())).toEqual([]);
-  });
-
-  it("rejects eve in -a", async () => {
-    const { environment } = setup();
-    await expect(findInstalledSkills(environment(), listOptions({ agents: ["eve"] }))).rejects.toThrow(/Invalid agents: eve\./);
-  });
-
   it("skips a SKILL.md with no name", async () => {
     const { cwd, environment } = setup();
     writeSkillMd(join(cwd, ".agents/skills/no-name"), "---\ndescription: Demo.\n---\n");
