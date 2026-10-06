@@ -1,10 +1,14 @@
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
-import { canonicalSkillsRoot, loadAgents, skillsRoot, type Agent, type AgentEnvironment, type Scope } from "./agents.js";
+import type { Dirent } from "node:fs";
+import { open, readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { agentsById, canonicalSkillsRoot, loadAgents, skillsRoot, type Agent, type AgentEnvironment, type Scope } from "./agents.js";
 import { skillName } from "./archive.js";
-import { CliError } from "./errors.js";
-import { homePath } from "./paths.js";
+import { formatTable, plural } from "./format.js";
+import { locator, type Locator } from "./installer.js";
+import { homePath, projectPath } from "./paths.js";
 import { oneLine, printable, redact } from "./source.js";
+
+const FRONTMATTER_BYTES = 64 * 1024;
 
 export interface ListOptions {
   global: boolean;
@@ -22,10 +26,17 @@ export interface InstalledSkill {
   agents: Agent[];
 }
 
-interface FoundSkill {
+interface Filter {
+  agents: Agent[];
+  everyFolder: boolean;
+  nameAll: boolean;
+}
+
+interface Found {
   name: string;
   path: string;
-  agents: Agent[];
+  real: string;
+  linked: boolean;
 }
 
 function byId(a: Agent, b: Agent): number {
@@ -37,22 +48,16 @@ export function listedScopes(options: ListOptions): ListScope[] {
   return options.global ? ["global"] : ["project"];
 }
 
-function candidateAgents(agents: Agent[], options: ListOptions): { candidates: Agent[]; filtered: boolean } {
-  const requested = options.agents;
-  if (requested === null || requested.includes("*")) return { candidates: agents, filtered: false };
-  const unique = [...new Set(requested)];
-  const byAgentId = new Map(agents.map((agent) => [agent.id, agent]));
-  const invalid = unique.filter((id) => !byAgentId.has(id));
-  if (invalid.length > 0) {
-    throw new CliError(`Invalid agents: ${invalid.join(", ")}. Valid agents: ${agents.map((agent) => agent.id).join(", ")}`);
-  }
-  return { candidates: unique.map((id) => byAgentId.get(id) as Agent), filtered: true };
+function agentFilter(agents: Agent[], requested: string[] | null): Filter {
+  if (requested === null) return { agents, everyFolder: false, nameAll: false };
+  if (requested.includes("*")) return { agents, everyFolder: true, nameAll: false };
+  return { agents: agentsById(agents, requested), everyFolder: true, nameAll: true };
 }
 
-function directoryAgents(scope: Scope, candidates: Agent[], filtered: boolean): Map<string, Agent[]> {
+function scopeFolders(scope: Scope, filter: Filter): Array<[string, Agent[]]> {
   const dirs = new Map<string, Agent[]>();
-  for (const agent of candidates) {
-    if (agent.projectOwned && !agent.installed && !filtered) continue;
+  for (const agent of filter.agents) {
+    if (agent.projectOwned && !agent.installed && !filter.everyFolder) continue;
     const root = skillsRoot(agent, scope);
     if (root === null) continue;
     const list = dirs.get(root);
@@ -60,107 +65,68 @@ function directoryAgents(scope: Scope, candidates: Agent[], filtered: boolean): 
     else dirs.set(root, [agent]);
   }
   for (const list of dirs.values()) list.sort(byId);
-  return dirs;
-}
-
-function orderedDirs(scope: Scope, dirs: Map<string, Agent[]>): string[] {
   const canonical = canonicalSkillsRoot(scope);
-  return [...dirs.keys()].sort((a, b) => {
-    if (a === canonical) return b === canonical ? 0 : -1;
-    if (b === canonical) return 1;
-    return byId(dirs.get(a)![0], dirs.get(b)![0]);
-  });
+  return [...dirs]
+    .sort(([a, first], [b, second]) => (a === canonical ? -1 : b === canonical ? 1 : byId(first[0], second[0])))
+    .map(([dir, agents]): [string, Agent[]] => [dir, filter.nameAll || agents.length === 1 ? agents : agents.filter((agent) => agent.installed)]);
 }
 
-function namedAgents(agents: Agent[], filtered: boolean): Agent[] {
-  return filtered || agents.length === 1 ? agents : agents.filter((agent) => agent.installed);
-}
-
-async function realOrResolved(dir: string): Promise<string> {
+async function readSkillName(skillMd: string): Promise<string | null> {
+  const info = await stat(skillMd);
+  if (!info.isFile()) return null;
+  const handle = await open(skillMd);
   try {
-    return await realpath(dir);
-  } catch {
-    return resolve(dir);
+    const head = Buffer.alloc(Math.min(info.size, FRONTMATTER_BYTES));
+    const { bytesRead } = await handle.read(head, 0, head.length, 0);
+    return skillName(head.toString("utf8", 0, bytesRead));
+  } finally {
+    await handle.close();
   }
 }
 
-async function scanDirectory(dir: string, agents: Agent[]): Promise<FoundSkill[]> {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
+async function scanDirectory(dir: string, where: Locator): Promise<Found[]> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch((): Dirent[] => []);
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const found: FoundSkill[] = [];
-  for (const entry of entries) {
-    const path = join(dir, entry.name);
-    let info;
-    try {
-      info = await stat(path);
-    } catch {
-      continue;
-    }
-    if (!info.isDirectory()) continue;
-    const skillMdPath = join(path, "SKILL.md");
-    let skillMdInfo;
-    try {
-      skillMdInfo = await stat(skillMdPath);
-    } catch {
-      continue;
-    }
-    if (!skillMdInfo.isFile()) continue;
-    let contents: string;
-    try {
-      contents = await readFile(skillMdPath, "utf8");
-    } catch {
-      continue;
-    }
-    const name = skillName(contents);
-    if (name === null) continue;
-    found.push({ name, path, agents });
-  }
-  return found;
+  const found = await Promise.all(
+    entries.map(async (entry): Promise<Found | null> => {
+      const path = join(dir, entry.name);
+      const name = await readSkillName(join(path, "SKILL.md")).catch(() => null);
+      if (name === null) return null;
+      const linked = entry.isSymbolicLink();
+      return { name, path, real: await (linked ? where.real(path) : where.located(path)), linked };
+    }),
+  );
+  return found.filter((skill) => skill !== null);
 }
 
-async function scanScope(scope: Scope, candidates: Agent[], filtered: boolean, skip: Set<string>): Promise<InstalledSkill[]> {
-  const dirs = directoryAgents(scope, candidates, filtered);
-  const order = orderedDirs(scope, dirs);
-  const merged = new Map<string, InstalledSkill>();
-  for (const dir of order) {
-    if (skip.size > 0 && skip.has(await realOrResolved(dir))) continue;
-    const dirAgents = dirs.get(dir)!;
-    const found = await scanDirectory(dir, namedAgents(dirAgents, filtered));
-    for (const skill of found) {
-      const existing = merged.get(skill.name);
-      if (existing === undefined) {
-        merged.set(skill.name, { name: skill.name, scope: scope.global ? "global" : "project", path: skill.path, agents: [...skill.agents] });
-      } else {
-        for (const agent of skill.agents) if (!existing.agents.includes(agent)) existing.agents.push(agent);
-      }
-    }
+async function scanScope(scope: Scope, folders: Array<[string, Agent[]]>, where: Locator, skip: Set<string>): Promise<InstalledSkill[]> {
+  const listed: ListScope = scope.global ? "global" : "project";
+  const scanned = await Promise.all(
+    folders.map(async ([dir, agents]) => (skip.size > 0 && skip.has(await where.real(dir)) ? [] : (await scanDirectory(dir, where)).map((found) => ({ ...found, agents })))),
+  );
+  const byFolder = new Map<string, InstalledSkill>();
+  for (const found of scanned.flat().sort((a, b) => Number(a.linked) - Number(b.linked))) {
+    const existing = byFolder.get(found.real);
+    if (existing === undefined) byFolder.set(found.real, { name: found.name, scope: listed, path: found.path, agents: [...found.agents] });
+    else for (const agent of found.agents) if (!existing.agents.includes(agent)) existing.agents.push(agent);
   }
-  const result = [...merged.values()];
+  const result = [...byFolder.values()];
   result.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const skill of result) skill.agents.sort(byId);
   return result;
 }
 
 export async function findInstalledSkills(environment: AgentEnvironment, options: ListOptions): Promise<InstalledSkill[]> {
-  const agents = loadAgents(environment);
-  const { candidates, filtered } = candidateAgents(agents, options);
-  const scopes = listedScopes(options);
-  const scopeOf = (global: boolean): Scope => ({ global, home: environment.home, cwd: environment.cwd });
-  const skip = new Set<string>();
-  if (scopes.includes("project") && scopes.includes("global")) {
-    const globalDirs = directoryAgents(scopeOf(true), candidates, filtered).keys();
-    for (const dir of await Promise.all([...globalDirs].map(realOrResolved))) skip.add(dir);
-  }
-  const results: InstalledSkill[] = [];
-  for (const scope of scopes) {
-    results.push(...(await scanScope(scopeOf(scope === "global"), candidates, filtered, scope === "project" ? skip : new Set())));
-  }
-  return results;
+  const filter = agentFilter(loadAgents(environment), options.agents);
+  const where = locator();
+  const planned = listedScopes(options).map((listed) => {
+    const scope: Scope = { global: listed === "global", home: environment.home, cwd: environment.cwd };
+    return { scope, folders: scopeFolders(scope, filter) };
+  });
+  const global = planned.find((plan) => plan.scope.global);
+  const globalReals = new Set(global === undefined ? [] : await Promise.all(global.folders.map(([dir]) => where.real(dir))));
+  const found = await Promise.all(planned.map((plan) => scanScope(plan.scope, plan.folders, where, plan.scope.global ? new Set() : globalReals)));
+  return found.flat();
 }
 
 function textCell(text: string): string {
@@ -176,27 +142,17 @@ function agentNames(agents: Agent[]): string[] {
 }
 
 function displayPath(skill: InstalledSkill, place: { home: string; cwd: string }): string {
-  if (skill.scope === "global") return homePath(skill.path, place.home);
-  return `.${sep}${relative(place.cwd, skill.path)}`;
+  return skill.scope === "global" ? homePath(skill.path, place.home) : projectPath(skill.path, place.cwd);
 }
 
-function textTable(skills: InstalledSkill[], place: { home: string; cwd: string }): string[] {
-  const header = ["NAME", "PATH", "AGENTS"];
+function textSection(scope: ListScope, skills: InstalledSkill[], place: { home: string; cwd: string }): string {
+  if (skills.length === 0) return `No ${scope} skills`;
   const rows = skills.map((skill) => [
     textCell(skill.name),
     textCell(displayPath(skill, place)),
     textCell(agentNames(skill.agents).join(", ") || "—"),
   ]);
-  const table = [header, ...rows];
-  const widths = header.slice(0, -1).map((_, column) => Math.max(...table.map((cells) => cells[column].length)));
-  return table.map((cells) => [...widths.map((width, column) => cells[column].padEnd(width)), cells[widths.length]].join("  "));
-}
-
-function textSection(scope: ListScope, skills: InstalledSkill[], place: { home: string; cwd: string }): string {
-  if (skills.length === 0) return `No ${scope} skills`;
-  const count = skills.length;
-  const label = `${count} ${scope} skill${count === 1 ? "" : "s"}`;
-  return [label, "", ...textTable(skills, place)].join("\n");
+  return [plural(skills.length, `${scope} skill`), "", ...formatTable([["NAME", "PATH", "AGENTS"], ...rows])].join("\n");
 }
 
 function jsonRow(skill: InstalledSkill): { name: string; path: string; scope: ListScope; agents: string[] } {

@@ -3,6 +3,7 @@ import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadAgents, type AgentEnvironment } from "../src/agents.js";
+import { displayWidth } from "../src/format.js";
 import { installSkill, type InstallOptions } from "../src/installer.js";
 import {
   findInstalledSkills,
@@ -89,12 +90,24 @@ describe("findInstalledSkills", () => {
     ]);
   });
 
-  it("merges a --copy install's separate directories into one row", async () => {
+  it("lists each copy of a --copy install on its own row", async () => {
     const { cwd, environment, install } = setup();
     await install("demo-skill", ["claude-code", "goose"], { copy: true });
     const result = await findInstalledSkills(environment(), listOptions());
     expect(simplify(result)).toEqual([
-      { name: "demo-skill", scope: "project", path: join(cwd, ".claude/skills/demo-skill"), agents: ["claude-code", "goose"] },
+      { name: "demo-skill", scope: "project", path: join(cwd, ".claude/skills/demo-skill"), agents: ["claude-code"] },
+      { name: "demo-skill", scope: "project", path: join(cwd, ".goose/skills/demo-skill"), agents: ["goose"] },
+    ]);
+  });
+
+  it("merges a link into the folder it points to, even when the link sorts first", async () => {
+    const { cwd, environment } = setup();
+    writeSkillMd(join(cwd, ".goose/skills/demo-skill"), skillMd("demo-skill"));
+    mkdirSync(join(cwd, ".claude/skills"), { recursive: true });
+    symlinkSync(join(cwd, ".goose/skills/demo-skill"), join(cwd, ".claude/skills/demo-skill"));
+    const result = await findInstalledSkills(environment(), listOptions());
+    expect(simplify(result)).toEqual([
+      { name: "demo-skill", scope: "project", path: join(cwd, ".goose/skills/demo-skill"), agents: ["claude-code", "goose"] },
     ]);
   });
 
@@ -169,7 +182,7 @@ describe("findInstalledSkills", () => {
     expect(result).toEqual([{ name: "demo-skill", scope: "global", path: join(homeLink, ".agents/skills/demo-skill"), agents: [] }]);
   });
 
-  it("filters directories by the given agents, keeps '*' as no filter, and rejects unknown ids", async () => {
+  it("filters directories by the given agents, lists every directory for '*', and rejects unknown ids", async () => {
     const { cwd, environment, install } = setup();
     writeSkillMd(join(cwd, ".agents/skills/only-canonical"), skillMd("only-canonical"));
     await install("linked-skill", ["claude-code"]);
@@ -254,6 +267,22 @@ describe("findInstalledSkills", () => {
     expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "skills/demo-skill"), agents: ["openclaw"] }]);
   });
 
+  it("lists an undetected project-owned agent's directory with -a '*', as add -a '*' writes there", async () => {
+    const { cwd, environment, install } = setup();
+    await install("demo-skill", ["openclaw"], { copy: true });
+    const result = simplify(await findInstalledSkills(environment(), listOptions({ agents: ["*"] })));
+    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "skills/demo-skill"), agents: ["openclaw"] }]);
+  });
+
+  it("does not take a project's data/skills folder alone as AstrBot", async () => {
+    const { cwd, environment } = setup();
+    writeSkillMd(join(cwd, "data/skills/demo-skill"), skillMd("demo-skill"));
+    expect(await findInstalledSkills(environment(), listOptions())).toEqual([]);
+    writeFileSync(join(cwd, "data/cmd_config.json"), "{}");
+    const result = simplify(await findInstalledSkills(environment(), listOptions()));
+    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "data/skills/demo-skill"), agents: ["astrbot"] }]);
+  });
+
   it("does not list agent/skills in a project that depends on eve", async () => {
     const { cwd, environment } = setup();
     mkdirSync(join(cwd, "agent"));
@@ -274,14 +303,26 @@ describe("findInstalledSkills", () => {
     expect(result).toEqual([]);
   });
 
-  it("names a skill by its frontmatter and merges directories sharing that name", async () => {
+  it("names a skill by its frontmatter and keeps separate folders sharing that name apart", async () => {
     const { home, cwd, environment } = setup();
     mkdirSync(join(home, ".cursor"));
     mkdirSync(join(home, ".claude"));
     writeSkillMd(join(cwd, ".agents/skills/odd-dir"), skillMd("real-name"));
-    writeSkillMd(join(cwd, ".claude/skills/real-name"), skillMd("real-name"));
+    writeSkillMd(join(cwd, ".claude/skills/real-name"), skillMd("real-name", "An older copy."));
     const result = simplify(await findInstalledSkills(environment(), listOptions()));
-    expect(result).toEqual([{ name: "real-name", scope: "project", path: join(cwd, ".agents/skills/odd-dir"), agents: ["claude-code", "cursor"] }]);
+    expect(result).toEqual([
+      { name: "real-name", scope: "project", path: join(cwd, ".agents/skills/odd-dir"), agents: ["cursor"] },
+      { name: "real-name", scope: "project", path: join(cwd, ".claude/skills/real-name"), agents: ["claude-code"] },
+    ]);
+  });
+
+  it("reads the frontmatter of a SKILL.md with a large body", async () => {
+    const { cwd, environment } = setup();
+    writeSkillMd(join(cwd, ".agents/skills/big"), `${skillMd("big")}
+${"x".repeat(1024 * 1024)}
+`);
+    const result = simplify(await findInstalledSkills(environment(), listOptions()));
+    expect(result.map((skill) => skill.name)).toEqual(["big"]);
   });
 });
 
@@ -324,6 +365,14 @@ describe("formatInstalledSkills", () => {
     expect(lines[10]).toBe("");
     expect(lines.filter((line) => line !== line.trimEnd())).toEqual([]);
     expect(text.endsWith("\n")).toBe(true);
+  });
+
+  it("aligns the columns after a name with wide characters", () => {
+    const skills = [skill("技能-demo", "project", "/w/.agents/skills/wide"), skill("narrow-skill-x", "project", "/w/.agents/skills/narrow")];
+    const lines = formatInstalledSkills(skills, listOptions({ project: true }), place).split("\n");
+    const column = displayWidth(lines[2].slice(0, lines[2].indexOf("PATH")));
+    expect(displayWidth(lines[3].slice(0, lines[3].indexOf("./")))).toBe(column);
+    expect(displayWidth(lines[4].slice(0, lines[4].indexOf("./")))).toBe(column);
   });
 
   it("renders project paths relative to cwd and global paths relative to, or outside, home", () => {

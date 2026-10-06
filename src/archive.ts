@@ -30,24 +30,21 @@ function parseFrontmatter(skillMd: string): { data: Record<string, unknown>; bod
 
 const filled = (value: unknown) => typeof value === "string" && value !== "";
 
-export function hasNameAndDescription(skillMd: string): boolean {
+function describedName(skillMd: string): string | null {
   const { data } = parseFrontmatter(skillMd.replace(/^\uFEFF/, ""));
-  return filled(data.name) && filled(data.description);
+  return filled(data.name) && filled(data.description) ? (data.name as string) : null;
 }
 
-function frontmatterFields(skillMd: string): { name: unknown; description: unknown } | null {
-  try {
-    const { data } = parseFrontmatter(skillMd.replace(/^\uFEFF/, ""));
-    return { name: data.name, description: data.description };
-  } catch {
-    return null;
-  }
+export function hasNameAndDescription(skillMd: string): boolean {
+  return describedName(skillMd) !== null;
 }
 
 export function skillName(skillMd: string): string | null {
-  const fields = frontmatterFields(skillMd);
-  if (fields === null) return null;
-  return filled(fields.name) && filled(fields.description) ? (fields.name as string) : null;
+  try {
+    return describedName(skillMd);
+  } catch {
+    return null;
+  }
 }
 
 export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimits = DEFAULT_LIMITS): SkillFiles {

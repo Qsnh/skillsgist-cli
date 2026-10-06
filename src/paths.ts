@@ -18,6 +18,10 @@ export function homePath(path: string, home: string): string {
   return under(path, home, "~") ?? path;
 }
 
+export function projectPath(path: string, cwd: string): string {
+  return under(path, cwd, ".") ?? path;
+}
+
 export function shortPath(path: string, home: string, cwd: string): string {
   return under(path, home, "~") ?? under(path, cwd, ".") ?? path;
 }

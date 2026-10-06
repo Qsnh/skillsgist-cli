@@ -50,6 +50,14 @@ describe("loadAgents", () => {
     expect(agents.filter((agent) => agent.installed).map((agent) => agent.id)).toEqual(["claude-code", "codex", "windsurf"]);
   });
 
+  it.each([["/w/.astrbot"], ["/w/data/cmd_config.json"], ["/h/.astrbot"]])("detects AstrBot by %s", (marker) => {
+    expect(byId(load({}, only(marker)), "astrbot").installed).toBe(true);
+  });
+
+  it("does not take a project's data/skills folder for AstrBot", () => {
+    expect(byId(load({}, only("/w/data", "/w/data/skills")), "astrbot").installed).toBe(false);
+  });
+
   it("picks OpenClaw's legacy directory when only that one exists", () => {
     expect(byId(load({}, only("/h/.clawdbot")), "openclaw").globalDir).toBe("/h/.clawdbot/skills");
   });

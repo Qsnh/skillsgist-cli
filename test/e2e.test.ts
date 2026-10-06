@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -237,7 +237,8 @@ describe("skillsgist agents", () => {
 
   it("ticks agents detected in the current directory", async () => {
     const box = sandbox();
-    mkdirSync(join(box.cwd, "data/skills"), { recursive: true });
+    mkdirSync(join(box.cwd, "data"));
+    writeFileSync(join(box.cwd, "data/cmd_config.json"), "{}");
     const result = await run(box, ["agents"]);
     expect(result.output).toMatch(/^✓ {2}astrbot /m);
   });
@@ -259,7 +260,9 @@ describe("skillsgist list", () => {
     const before = sandboxSnapshot(box);
     const result = await run(box, ["list"]);
     expect(result.code).toBe(0);
-    expect(result.output).toMatch(/^demo-skill +\.\/\.agents\/skills\/demo-skill +Claude Code$/m);
+    // Codex counts as detected wherever the host has /etc/codex, which the sandbox cannot hide.
+    const agents = existsSync("/etc/codex") ? "Claude Code, Codex" : "Claude Code";
+    expect(result.output).toMatch(new RegExp(`^demo-skill +\\./\\.agents/skills/demo-skill +${agents}$`, "m"));
     expect(result.output).toContain("other-skill");
     expect(result.connections).toEqual(added.connections);
     expect(result.output).not.toContain("\x1b");

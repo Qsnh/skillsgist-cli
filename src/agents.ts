@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { CliError } from "./errors.js";
 
 export const CANONICAL_SKILLS_DIR = ".agents/skills";
 
@@ -72,7 +73,7 @@ const AGENTS: AgentDef[] = [
   { id: "amp", displayName: "Amp", skillsDir: ".agents/skills", globalDir: (p) => join(p.config, "agents/skills"), detect: (p, exists) => exists(join(p.config, "amp")) },
   { id: "antigravity", displayName: "Antigravity", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/antigravity/skills"), detect: (p, exists) => exists(join(p.home, ".gemini/antigravity")) },
   { id: "antigravity-cli", displayName: "Antigravity CLI", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/antigravity-cli/skills"), detect: (p, exists) => exists(join(p.home, ".gemini/antigravity-cli")) },
-  { id: "astrbot", displayName: "AstrBot", skillsDir: "data/skills", globalDir: (p) => join(p.home, ".astrbot/data/skills"), detect: (p, exists) => exists(join(p.cwd, "data/skills")) || exists(join(p.home, ".astrbot")), projectOwned: true },
+  { id: "astrbot", displayName: "AstrBot", skillsDir: "data/skills", globalDir: (p) => join(p.home, ".astrbot/data/skills"), detect: (p, exists) => exists(join(p.cwd, ".astrbot")) || exists(join(p.cwd, "data/cmd_config.json")) || exists(join(p.home, ".astrbot")), projectOwned: true },
   { id: "autohand-code", displayName: "Autohand Code CLI", skillsDir: ".autohand/skills", globalDir: (p) => join(p.autohand, "skills"), detect: (p, exists) => exists(p.autohand) },
   { id: "augment", displayName: "Augment", skillsDir: ".augment/skills", globalDir: (p) => join(p.home, ".augment/skills"), detect: (p, exists) => exists(join(p.home, ".augment")) },
   { id: "bob", displayName: "IBM Bob", skillsDir: ".bob/skills", globalDir: (p) => join(p.home, ".bob/skills"), detect: (p, exists) => exists(join(p.home, ".bob")) },
@@ -193,6 +194,16 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
       installed: def.detect(paths, exists),
     };
   });
+}
+
+export function agentsById(agents: Agent[], ids: string[]): Agent[] {
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  const unique = [...new Set(ids)];
+  const invalid = unique.filter((id) => !byId.has(id));
+  if (invalid.length > 0) {
+    throw new CliError(`Invalid agents: ${invalid.join(", ")}. Valid agents: ${agents.map((agent) => agent.id).join(", ")}`);
+  }
+  return unique.map((id) => byId.get(id) as Agent);
 }
 
 export function canonicalSkillsRoot(scope: Scope): string {

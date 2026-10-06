@@ -100,18 +100,30 @@ describe("runAdd", () => {
     expect(filesContaining(box.home, KEY)).toEqual([]);
   });
 
-  it("links the detected agents and the universal directory inside an agent it does not know", async () => {
+  it("installs only into the universal directory inside an agent it does not know", async () => {
     const box = sandbox({ AI_AGENT: "v0" }, false);
     mkdirSync(join(box.home, ".claude"));
+    mkdirSync(join(box.home, ".roo"));
     const ui = fakeUi();
     expect(await runAdd(url, options({ skills: ["demo-skill"], global: true, yes: true }), box.context(ui.ui))).toBe(0);
     expect(ui.asked).toEqual([]);
     expect(ui.text()).toContain("An agent detected");
     expect(existsSync(join(box.home, ".agents/skills/demo-skill/SKILL.md"))).toBe(true);
-    expect(lstatSync(join(box.home, ".claude/skills/demo-skill")).isSymbolicLink()).toBe(true);
-    expect(ui.text()).toContain("symlinked: Claude Code");
+    expect(readdirSync(join(box.home, ".claude"))).toEqual([]);
+    expect(readdirSync(join(box.home, ".roo"))).toEqual([]);
+    expect(ui.text()).not.toContain("symlinked");
     expect(ui.text()).not.toContain(KEY);
     expect(filesContaining(box.home, KEY)).toEqual([]);
+  });
+
+  it("installs a project skill only into .agents/skills inside Eve, which it no longer knows", async () => {
+    const box = sandbox({ AI_AGENT: "eve" }, false);
+    mkdirSync(join(box.home, ".claude"));
+    mkdirSync(join(box.home, ".openclaw"));
+    const ui = fakeUi();
+    expect(await runAdd(url, options({ skills: ["demo-skill"] }), box.context(ui.ui))).toBe(0);
+    expect(readdirSync(box.cwd)).toEqual([".agents"]);
+    expect(existsSync(join(box.cwd, ".agents/skills/demo-skill/SKILL.md"))).toBe(true);
   });
 
   it("names Devin when it finds Devin's marker file", async () => {

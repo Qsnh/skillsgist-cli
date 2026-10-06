@@ -1,6 +1,7 @@
-import { detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
+import { agentsById, detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
 import { unpackSkill, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
+import { plural } from "./format.js";
 import {
   canonicalSkillDir,
   installSkill,
@@ -78,10 +79,6 @@ interface Selection {
 
 const unique = <T>(items: T[]): T[] => [...new Set(items)];
 
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
-}
-
 function formatList(items: string[], max = 5): string {
   return items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
 }
@@ -110,23 +107,16 @@ async function chooseSkills(all: SkillEntry[], options: AddOptions, yes: boolean
 }
 
 async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, running: RunningAgent, ui: Ui): Promise<Cancellable<Selection>> {
-  const byId = new Map(agents.map((agent) => [agent.id, agent]));
-  const pick = (ids: string[]) => unique(ids).map((id) => byId.get(id) as Agent);
+  const pick = (ids: string[]) => agentsById(agents, ids);
   const universal = agents.filter((agent) => agent.universal);
   const select = (picked: Agent[], extra: Agent[] = []): Selection => {
     const implied = extra.filter((agent) => !picked.includes(agent));
     return { agents: [...picked, ...implied], implied: new Set(implied) };
   };
   if (options.agents?.includes("*")) return select([], agents);
-  if (options.agents) {
-    const invalid = options.agents.filter((id) => !byId.has(id));
-    if (invalid.length > 0) {
-      throw new CliError(`Invalid agents: ${invalid.join(", ")}. Valid agents: ${agents.map((agent) => agent.id).join(", ")}`);
-    }
-    return select(pick(options.agents));
-  }
+  if (options.agents) return select(pick(options.agents));
+  if (running.inAgent) return select(running.id === null ? [] : pick([running.id]), universal);
   const installed = agents.filter((agent) => agent.installed);
-  if (running.inAgent) return select(running.id === null ? installed : pick([running.id]), universal);
   if (installed.length === 0) {
     if (yes) return select([], universal);
     const chosen = await ui.selectAgents({ choices: agents, initial: DEFAULT_AGENTS, locked: [] });

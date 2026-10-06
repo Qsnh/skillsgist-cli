@@ -49,7 +49,7 @@ describe("listAgents", () => {
   });
 
   it("ticks the agents detected on this machine or in the current directory", () => {
-    const text = list({}, only("/h/.claude", "/etc/codex", "/w/data/skills"));
+    const text = list({}, only("/h/.claude", "/etc/codex", "/w/data/cmd_config.json"));
     expect(lines(text).filter((line) => line.startsWith("✓")).map(idOf)).toEqual(["astrbot", "claude-code", "codex"]);
   });
 
@@ -85,7 +85,7 @@ describe("listAgents", () => {
       "Inside Claude Code, `skillsgist add <url>` without -a installs for claude-code and the agents that read .agents/skills, whatever is ticked.",
     );
     expect(lines(list({ AI_AGENT: "mystery" }))[1]).toBe(
-      "Inside an agent, `skillsgist add <url>` without -a installs for the ticked agents and the agents that read .agents/skills.",
+      "Inside an agent, `skillsgist add <url>` without -a installs only for the agents that read .agents/skills, whatever is ticked.",
     );
     expect(lines(list({ CLAUDECODE: "1" })).slice(2)).toEqual(lines(list()).slice(1));
   });
