@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { runAdd } from "./add.js";
 import { parseCommandLine, USAGE } from "./args.js";
 import { CliError } from "./errors.js";
+import { listAgents } from "./list-agents.js";
 import { clackUi } from "./ui.js";
 
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -18,6 +19,10 @@ async function main(argv: string[]): Promise<number> {
     }
     if (command.kind === "version") {
       process.stdout.write(`${version}\n`);
+      return 0;
+    }
+    if (command.kind === "agents") {
+      process.stdout.write(listAgents({ home: homedir(), cwd: process.cwd(), env: process.env }));
       return 0;
     }
     return await runAdd(command.url, command.options, {

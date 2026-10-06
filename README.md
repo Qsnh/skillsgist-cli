@@ -25,6 +25,7 @@ npx skillsgist add https://skills.example.com/i/<install_key>
 
 ```
 npx skillsgist add <url> [options]
+npx skillsgist agents
 ```
 
 | Option | Meaning |
@@ -36,6 +37,8 @@ npx skillsgist add <url> [options]
 | `--copy` | Copy into each agent directory instead of symlinking |
 | `--all` | Same as `-s '*' -a '*' -y` |
 | `-l, --list` | List the registry's skills without installing |
+
+`npx skillsgist agents` lists every agent ID `-a` accepts, with the folder each agent reads in a project and the one it reads with `-g`, and ticks the agents found on this machine. It only looks at the local disk.
 
 The URL is any address a skillsgist page shows:
 

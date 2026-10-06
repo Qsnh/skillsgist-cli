@@ -2,8 +2,13 @@ import type { AddOptions } from "./add.js";
 import { CliError } from "./errors.js";
 
 export const USAGE = `Usage: skillsgist add <url> [options]
+       skillsgist agents
 
 Install Agent Skills from a skillsgist registry. The URL and its install key are never stored.
+
+Commands:
+  add <url>               Install skills from the registry at <url> (also: a, install, i)
+  agents                  List the agents -a accepts and the directories they read
 
 Options:
   -g, --global            Install into your home directory instead of the project
@@ -17,15 +22,26 @@ Options:
   -v, --version           Show the version
 `;
 
-export type Command = { kind: "help" } | { kind: "version" } | { kind: "add"; url: string; options: AddOptions };
+export type Command = { kind: "help" } | { kind: "version" } | { kind: "agents" } | { kind: "add"; url: string; options: AddOptions };
 
 const ADD_COMMANDS = new Set(["add", "a", "install", "i"]);
 const LOOKS_LIKE_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+function parseAgents(rest: string[]): Command {
+  for (const arg of rest) {
+    if (arg === "-h" || arg === "--help") return { kind: "help" };
+    if (arg === "-v" || arg === "--version") return { kind: "version" };
+    if (arg.startsWith("-")) throw new CliError(`Unknown option: ${arg}`, { showUsage: true });
+    throw new CliError(`Unexpected argument: ${arg}`, { showUsage: true });
+  }
+  return { kind: "agents" };
+}
 
 export function parseCommandLine(argv: string[]): Command {
   const [command, ...rest] = argv;
   if (command === undefined || command === "-h" || command === "--help") return { kind: "help" };
   if (command === "-v" || command === "--version") return { kind: "version" };
+  if (command === "agents") return parseAgents(rest);
   if (!ADD_COMMANDS.has(command)) throw new CliError(`Unknown command: ${command}`, { showUsage: true });
   const options: AddOptions = { global: false, agents: null, skills: null, yes: false, copy: false, list: false };
   let url: string | null = null;
