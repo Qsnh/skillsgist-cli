@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 export const CANONICAL_SKILLS_DIR = ".agents/skills";
@@ -64,18 +64,6 @@ export interface Scope {
   cwd: string;
 }
 
-function hasDependency(packageJsonPath: string, name: string): boolean {
-  try {
-    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    return Boolean(pkg.dependencies?.[name] || pkg.devDependencies?.[name]);
-  } catch {
-    return false;
-  }
-}
-
 function openClawGlobalDir(p: AgentPaths, exists: Exists): string {
   for (const dir of [".openclaw", ".clawdbot", ".moltbot"]) {
     if (exists(join(p.home, dir))) return join(p.home, dir, "skills");
@@ -109,7 +97,6 @@ const AGENTS: AgentDef[] = [
   { id: "devin", displayName: "Devin for Terminal", skillsDir: ".devin/skills", globalDir: (p) => join(p.config, "devin/skills"), detect: (p, exists) => exists(join(p.config, "devin")) },
   { id: "dexto", displayName: "Dexto", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".agents/skills"), detect: (p, exists) => exists(join(p.home, ".dexto")), hiddenInPrompt: true },
   { id: "droid", displayName: "Droid", skillsDir: ".factory/skills", globalDir: (p) => join(p.home, ".factory/skills"), detect: (p, exists) => exists(join(p.home, ".factory")) },
-  { id: "eve", displayName: "Eve", skillsDir: "agent/skills", globalDir: () => null, detect: (p, exists) => exists(join(p.cwd, "agent")) && hasDependency(join(p.cwd, "package.json"), "eve"), pickable: false, ownCopy: true },
   { id: "firebender", displayName: "Firebender", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".firebender/skills"), detect: (p, exists) => exists(join(p.home, ".firebender")), hiddenInPrompt: true },
   { id: "forgecode", displayName: "ForgeCode", skillsDir: ".forge/skills", globalDir: (p) => join(p.home, ".forge/skills"), detect: (p, exists) => exists(join(p.home, ".forge")) },
   { id: "gemini-cli", displayName: "Gemini CLI", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/skills"), detect: (p, exists) => exists(join(p.home, ".gemini")) },

@@ -15,7 +15,7 @@ const cells = (text: string, id: string) => row(text, id).slice(3).split(/ {2,}/
 describe("listAgents", () => {
   it("lists every agent -a accepts, sorted by id", () => {
     const text = list();
-    expect(lines(text)[0]).toBe("73 agents. Pass their IDs to `skillsgist add <url> -a`; ✓ marks the ones detected on this machine or in the current directory.");
+    expect(lines(text)[0]).toBe("72 agents. Pass their IDs to `skillsgist add <url> -a`; ✓ marks the ones detected on this machine or in the current directory.");
     expect(lines(text)[1]).toBe("");
     const known = loadAgents({ home: "/h", cwd: "/w", env: {}, exists: none }).map((agent) => agent.id);
     expect(lines(text).slice(3, -1).map(idOf)).toEqual([...known].sort());
@@ -55,7 +55,6 @@ describe("listAgents", () => {
 
   it("marks agents without a global directory with a dash", () => {
     const text = list();
-    expect(row(text, "eve")).toMatch(/ agent\/skills +—$/);
     expect(row(text, "promptscript")).toMatch(/ \.agents\/skills +—$/);
   });
 

@@ -1,10 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { detectRunningAgent, loadAgents, skillsRoot, type Agent } from "../src/agents.js";
-import { cleanup, sandboxExists, tempDir } from "./helpers/fs.js";
-
-afterEach(cleanup);
 
 const none = () => false;
 const only = (...paths: string[]) => (path: string) => paths.includes(path);
@@ -12,10 +7,11 @@ const load = (env: NodeJS.ProcessEnv = {}, exists: (path: string) => boolean = n
 const byId = (agents: Agent[], id: string) => agents.find((agent) => agent.id === id)!;
 
 describe("loadAgents", () => {
-  it("knows the 73 agents of skills 1.5.18, each once", () => {
+  it("knows the 73 agents of skills 1.5.18 except Eve, each once", () => {
     const ids = load().map((agent) => agent.id);
-    expect(ids).toHaveLength(73);
-    expect(new Set(ids).size).toBe(73);
+    expect(ids).toHaveLength(72);
+    expect(new Set(ids).size).toBe(72);
+    expect(ids).not.toContain("eve");
   });
 
   it("puts the 17 universal agents in .agents/skills and hides four of them", () => {
@@ -29,16 +25,8 @@ describe("loadAgents", () => {
     expect(byId(agents, "universal")).toMatchObject({ canonical: true, universal: false });
   });
 
-  it("leaves only Eve out of the agent picker", () => {
-    expect(load().filter((agent) => !agent.pickable).map((agent) => agent.id)).toEqual(["eve"]);
-  });
-
   it("marks the agents whose project folder -y never replaces", () => {
     expect(load().filter((agent) => agent.projectOwned).map((agent) => agent.id)).toEqual(["astrbot", "openclaw"]);
-  });
-
-  it("gives only Eve its own copy instead of a link", () => {
-    expect(load().filter((agent) => agent.ownCopy).map((agent) => agent.id)).toEqual(["eve"]);
   });
 
   it("resolves global directories from the home directory", () => {
@@ -46,7 +34,6 @@ describe("loadAgents", () => {
     expect(byId(agents, "claude-code").globalDir).toBe("/h/.claude/skills");
     expect(byId(agents, "windsurf").globalDir).toBe("/h/.codeium/windsurf/skills");
     expect(byId(agents, "opencode").globalDir).toBe("/h/.config/opencode/skills");
-    expect(byId(agents, "eve").globalDir).toBeNull();
     expect(byId(agents, "promptscript").globalDir).toBeNull();
   });
 
@@ -66,15 +53,6 @@ describe("loadAgents", () => {
   it("picks OpenClaw's legacy directory when only that one exists", () => {
     expect(byId(load({}, only("/h/.clawdbot")), "openclaw").globalDir).toBe("/h/.clawdbot/skills");
   });
-
-  it("detects Eve only with an agent directory and an eve dependency", () => {
-    const cwd = tempDir();
-    mkdirSync(join(cwd, "agent"));
-    const eve = () => byId(loadAgents({ home: "/h", cwd, env: {}, exists: sandboxExists(cwd) }), "eve").installed;
-    expect(eve()).toBe(false);
-    writeFileSync(join(cwd, "package.json"), JSON.stringify({ dependencies: { eve: "1.0.0" } }));
-    expect(eve()).toBe(true);
-  });
 });
 
 describe("skillsRoot", () => {
@@ -91,11 +69,9 @@ describe("skillsRoot", () => {
     expect(root("claude-code", false)).toBe("/w/.claude/skills");
     expect(root("claude-code", true)).toBe("/h/.claude/skills");
     expect(root("goose", true)).toBe("/x/goose/skills");
-    expect(root("eve", false)).toBe("/w/agent/skills");
   });
 
   it("has no global folder for agents that cannot install globally", () => {
-    expect(root("eve", true)).toBeNull();
     expect(root("promptscript", true)).toBeNull();
     expect(root("promptscript", false)).toBe("/w/.agents/skills");
   });
@@ -126,6 +102,7 @@ describe("detectRunningAgent", () => {
     [{ AI_AGENT: "cursor-cli" }, "cursor"],
     [{ AI_AGENT: "cursor-cli", CURSOR_TRACE_ID: "t" }, "cursor"],
     [{ AI_AGENT: "toString" }, null],
+    [{ AI_AGENT: "eve" }, null],
     [{ AI_AGENT: "constructor", CLAUDECODE: "1" }, "claude-code"],
   ])("maps %j to %s", (env, id) => {
     expect(detectRunningAgent(env, none)).toMatchObject({ inAgent: true, id });

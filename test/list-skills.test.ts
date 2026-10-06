@@ -254,36 +254,20 @@ describe("findInstalledSkills", () => {
     expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "skills/demo-skill"), agents: ["openclaw"] }]);
   });
 
-  function withEve(cwd: string) {
+  it("does not list agent/skills in a project that depends on eve", async () => {
+    const { cwd, environment } = setup();
     mkdirSync(join(cwd, "agent"));
     writeFileSync(join(cwd, "package.json"), JSON.stringify({ dependencies: { eve: "1" } }));
-  }
-
-  it("detects Eve's symlink-mode own copy and merges it into the canonical row", async () => {
-    const { cwd, environment, install } = setup();
-    withEve(cwd);
-    await install("demo-skill", ["eve"]);
-    const result = simplify(await findInstalledSkills(environment(), listOptions()));
-    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, ".agents/skills/demo-skill"), agents: ["eve"] }]);
+    writeSkillMd(join(cwd, "agent/skills/demo-skill"), skillMd("demo-skill"));
+    expect(await findInstalledSkills(environment(), listOptions())).toEqual([]);
   });
 
-  it("detects Eve's copy-mode own copy with no canonical directory at all", async () => {
-    const { cwd, environment, install } = setup();
-    withEve(cwd);
-    await install("demo-skill", ["eve"], { copy: true });
-    const result = simplify(await findInstalledSkills(environment(), listOptions()));
-    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "agent/skills/demo-skill"), agents: ["eve"] }]);
+  it("rejects eve in -a", async () => {
+    const { environment } = setup();
+    await expect(findInstalledSkills(environment(), listOptions({ agents: ["eve"] }))).rejects.toThrow(/Invalid agents: eve\./);
   });
 
-  it("still finds Eve's copy-mode copy when filtered to just eve", async () => {
-    const { cwd, environment, install } = setup();
-    withEve(cwd);
-    await install("demo-skill", ["eve"], { copy: true });
-    const result = simplify(await findInstalledSkills(environment(), listOptions({ agents: ["eve"] })));
-    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "agent/skills/demo-skill"), agents: ["eve"] }]);
-  });
-
-  it("still skips a nameless SKILL.md in a directory not read by an ownCopy agent", async () => {
+  it("skips a SKILL.md with no name", async () => {
     const { cwd, environment } = setup();
     writeSkillMd(join(cwd, ".agents/skills/no-name"), "---\ndescription: Demo.\n---\n");
     const result = await findInstalledSkills(environment(), listOptions());

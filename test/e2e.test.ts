@@ -215,7 +215,7 @@ describe("skillsgist agents", () => {
     mkdirSync(join(box.home, ".claude"));
     const result = await run(box, ["agents"]);
     expect(result.code).toBe(0);
-    expect(result.output).toMatch(/^73 agents\. /);
+    expect(result.output).toMatch(/^72 agents\. /);
     expect(result.output).toMatch(/^✓ {2}claude-code +Claude Code +\.claude\/skills +~\/\.claude\/skills$/m);
     expect(result.output).toMatch(/^ {3}amp +Amp +\.agents\/skills +~\/\.agents\/skills$/m);
     expect(result.output).not.toContain("\x1b");
