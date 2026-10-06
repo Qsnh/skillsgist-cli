@@ -50,10 +50,6 @@ With `-y`, or inside an agent, a project install fails for an agent rather than 
 
 Inside a coding agent (Claude Code, Codex, Cursor and others are detected from their environment), `-y` is implied and the agent is added to the targets. If `AI_AGENT` names an agent it does not know, `-y` is still implied, and the agents found on the machine are the targets instead. Cursor's terminal on its own does not count as an agent.
 
-```
-npx skillsgist agents
-```
-
 ## What can still see the key
 
 - **The command line.** Your shell history and the agent's transcript keep the command you ran.
