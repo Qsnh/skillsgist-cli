@@ -20,6 +20,7 @@ Options:
 export type Command = { kind: "help" } | { kind: "version" } | { kind: "add"; url: string; options: AddOptions };
 
 const ADD_COMMANDS = new Set(["add", "a", "install", "i"]);
+const LOOKS_LIKE_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 export function parseCommandLine(argv: string[]): Command {
   const [command, ...rest] = argv;
@@ -59,7 +60,7 @@ export function parseCommandLine(argv: string[]): Command {
       case "-s":
       case "--skill": {
         const values: string[] = [];
-        while (i + 1 < rest.length && !rest[i + 1].startsWith("-")) {
+        while (i + 1 < rest.length && !rest[i + 1].startsWith("-") && !LOOKS_LIKE_URL.test(rest[i + 1])) {
           values.push(rest[i + 1]);
           i += 1;
         }

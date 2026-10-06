@@ -84,6 +84,23 @@ describe("redact", () => {
     expect(redact(`https://h.example/i/${OTHER}/d/x/1.zip`)).toBe("https://h.example/i/fedc…/d/x/1.zip");
   });
 
+  it.each([`skills.example.com/i/${OTHER}`, `localhost:8787/i/${OTHER}`, `"https://h.example/i/${OTHER}"`, `(http://[::1]:8080/i/${OTHER})`])(
+    "masks the key in %s",
+    (text) => {
+      expect(redact(text)).not.toContain(OTHER);
+      expect(redact(text)).toContain("/i/fedc…");
+    },
+  );
+
+  it.each([
+    "✓ /srv/i/project/.claude/skills/demo",
+    "✓ ~/i/skillsgist-work/.agents/skills/demo",
+    "EACCES: permission denied, mkdir '/Users/me/i/skillsgist-work/.claude'",
+    'demo: the archive has unsafe path "a/i/skillsgist-work"',
+  ])("leaves the path in %s alone", (text) => {
+    expect(redact(text)).toBe(text);
+  });
+
   it("is idempotent", () => {
     const once = redact(`https://h.example/i/${OTHER}`);
     expect(redact(once)).toBe(once);

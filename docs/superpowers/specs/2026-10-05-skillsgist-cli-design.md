@@ -101,7 +101,7 @@ Unlike `npx skills`, the CLI never falls back to the origin's root index, so it 
 Only discovery schema 0.2.0 is supported: `$schema` must equal `https://schemas.agentskills.io/discovery/0.2.0/schema.json`, otherwise the index is rejected as unsupported. Each entry is kept only if:
 
 - `name` matches `^[a-z0-9]+(-[a-z0-9]+)*$` and is 1–64 characters
-- `description` is a non-empty string of at most 1024 characters
+- `description` is a string of at most 1024 characters that is not empty once control characters are removed (the kept description has its control and bidi-override characters removed and its whitespace collapsed to single spaces, so it prints as one line)
 - `type` is `"archive"`
 - `digest` matches `^sha256:[a-f0-9]{64}$`
 - `url`, resolved against the index URL, has the same origin as the input URL
@@ -110,7 +110,7 @@ An entry failing any check is skipped with a warning naming the entry (never its
 
 ### Requests
 
-All requests use `fetch` with `redirect: "error"` and a 30-second timeout (`AbortSignal.timeout`), and send no credentials or custom headers.
+All requests use `fetch` with `redirect: "error"` and send no credentials or custom headers. A request fails with `timed out` if the response headers take more than 30 seconds, or if the body then goes 30 seconds without a new chunk; a slow but steady download is never cut off. The index body is capped at 10 MiB and an artifact at 50 MiB, checked against `Content-Length` first and again while streaming. A connection lost while reading the index is reported as a network failure, not as invalid JSON.
 
 ## Add flow
 
@@ -132,11 +132,13 @@ All requests use `fetch` with `redirect: "error"` and a 30-second timeout (`Abor
    - No choice is remembered between runs.
 5. **Scope.** `-g` means global. Otherwise `-y` means project. Otherwise a select prompt: Project (first), Global.
    - In global scope, agents without a global directory (`eve`, `promptscript`) are dropped from the targets if they were selected automatically, and are an error if named with `-a`.
-6. **Confirm.** Without `-y`, show a summary (skills, agents, scope, method, and which existing directories will be overwritten) and ask to proceed. Cancelling at any prompt prints `Installation cancelled` and exits 0.
+6. **Confirm.** Without `-y`, show a summary (skills, agents, scope, method, and which existing directories will be overwritten: the canonical directory, plus any agent directory that holds something other than a link to it; a link already pointing at the canonical directory is kept and not listed) and ask to proceed. Cancelling at any prompt prints `Installation cancelled` and exits 0.
 7. **Download.** For each selected skill, download the artifact, check its sha256 against `digest`, and unpack it in memory. Any failure aborts the whole run before anything is written.
 8. **Install.** See Installation. Then print the result.
 
-Without a TTY on stdin, without `-y`, and not inside an agent, the run fails with a message to add `-y`.
+Without a TTY on stdin, without `-y`, not inside an agent, and without `--list`, the run fails with a message to add `-y` before it sends any request.
+
+Artifacts are downloaded up to 4 at a time. The first failure aborts the other downloads.
 
 ## Installation
 
@@ -170,7 +172,7 @@ In copy mode: `✓ demo-skill (copied)` followed by one `→ <path>` line per ta
 
 ## Key masking
 
-`source.ts` records the key of an `/i/<key>` URL at parse time. `redact(text)` replaces every occurrence of that key with its first 4 characters followed by `…`, and also masks any other `/i/<segment>` it finds. Every string the CLI prints, including error messages and causes from `fetch`, goes through `redact()`. Stack traces are never printed, and there is no debug switch.
+`source.ts` records the key of an `/i/<key>` URL at parse time. `redact(text)` replaces every occurrence of that key with its first 4 characters followed by `…`, and also masks any other `/i/<segment>` that directly follows a host (`scheme://host`, a dotted host name, `localhost` or a bracketed IPv6 address, each with an optional port), so a filesystem path such as `/srv/i/project` is printed unchanged. Every string the CLI prints, including error messages and causes from `fetch`, has its control characters (other than newline and tab) and bidi overrides removed and then goes through `redact()`. Stack traces are never printed, and there is no debug switch.
 
 ## Archive handling
 

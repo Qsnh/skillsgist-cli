@@ -1,10 +1,14 @@
 import * as clack from "@clack/prompts";
 import { CANCELLED, type AgentRequest, type Cancellable, type Ui } from "./add.js";
 import type { SkillEntry } from "./registry.js";
-import { redact } from "./source.js";
+import { printable, redact } from "./source.js";
 
 function settle<T>(value: T | symbol): Cancellable<T> {
   return clack.isCancel(value) ? CANCELLED : (value as T);
+}
+
+function show(text: string): string {
+  return redact(printable(text));
 }
 
 function hint(text: string): string {
@@ -13,20 +17,20 @@ function hint(text: string): string {
 
 export function clackUi(): Ui {
   return {
-    intro: (title) => clack.intro(redact(title)),
-    step: (message) => clack.log.step(redact(message)),
-    info: (message) => clack.log.info(redact(message)),
-    warn: (message) => clack.log.warn(redact(message)),
-    error: (message) => clack.log.error(redact(message)),
-    message: (message) => clack.log.message(redact(message)),
-    note: (body, title) => clack.note(redact(body), redact(title)),
-    cancel: (message) => clack.cancel(redact(message)),
-    outro: (message) => clack.outro(redact(message)),
+    intro: (title) => clack.intro(show(title)),
+    step: (message) => clack.log.step(show(message)),
+    info: (message) => clack.log.info(show(message)),
+    warn: (message) => clack.log.warn(show(message)),
+    error: (message) => clack.log.error(show(message)),
+    message: (message) => clack.log.message(show(message)),
+    note: (body, title) => clack.note(show(body), show(title)),
+    cancel: (message) => clack.cancel(show(message)),
+    outro: (message) => clack.outro(show(message)),
     async selectSkills(skills: SkillEntry[]) {
       const chosen = settle<string[]>(
         await clack.multiselect({
-          message: redact("Select skills to install"),
-          options: skills.map((skill) => ({ value: skill.name, label: redact(skill.name), hint: hint(redact(skill.description)) })),
+          message: show("Select skills to install"),
+          options: skills.map((skill) => ({ value: skill.name, label: show(skill.name), hint: hint(show(skill.description)) })),
           required: true,
         }),
       );
@@ -34,31 +38,31 @@ export function clackUi(): Ui {
     },
     async selectAgents(request: AgentRequest) {
       if (request.locked.length > 0) {
-        clack.log.info(redact(`Universal (.agents/skills), always included: ${request.locked.map((agent) => agent.displayName).join(", ")}`));
+        clack.log.info(show(`Universal (.agents/skills), always included: ${request.locked.map((agent) => agent.displayName).join(", ")}`));
       }
       return settle<string[]>(
         await clack.autocompleteMultiselect({
-          message: redact("Which agents do you want to install to?"),
-          options: request.choices.map((agent) => ({ value: agent.id, label: redact(agent.displayName), hint: redact(agent.skillsDir) })),
+          message: show("Which agents do you want to install to?"),
+          options: request.choices.map((agent) => ({ value: agent.id, label: show(agent.displayName), hint: show(agent.skillsDir) })),
           initialValues: request.initial,
           required: request.locked.length === 0,
-          placeholder: redact("Type to search"),
+          placeholder: show("Type to search"),
         }),
       );
     },
     async selectScope() {
       return settle<boolean>(
         await clack.select({
-          message: redact("Installation scope"),
+          message: show("Installation scope"),
           options: [
-            { value: false, label: redact("Project"), hint: redact("Install in the current directory") },
-            { value: true, label: redact("Global"), hint: redact("Install in your home directory") },
+            { value: false, label: show("Project"), hint: show("Install in the current directory") },
+            { value: true, label: show("Global"), hint: show("Install in your home directory") },
           ],
         }),
       );
     },
     async confirm(message: string) {
-      return settle<boolean>(await clack.confirm({ message: redact(message) }));
+      return settle<boolean>(await clack.confirm({ message: show(message) }));
     },
   };
 }

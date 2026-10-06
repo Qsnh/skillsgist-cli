@@ -15,7 +15,6 @@ export interface InstalledAgent {
   agent: Agent;
   status: "canonical" | "symlinked" | "copied";
   path: string;
-  symlinkFailed: boolean;
 }
 
 export interface FailedAgent {
@@ -112,7 +111,7 @@ export async function installSkill(name: string, files: SkillFiles, agents: Agen
       }
       if (!written.has(dir)) written.set(dir, await attempt(() => writeSkill(dir, files)));
       const error = written.get(dir);
-      results.push(error ? { agent, status: "failed", path: dir, error } : { agent, status: "copied", path: dir, symlinkFailed: false });
+      results.push(error ? { agent, status: "failed", path: dir, error } : { agent, status: "copied", path: dir });
     }
     return { name, canonicalPath, agents: results };
   }
@@ -124,22 +123,30 @@ export async function installSkill(name: string, files: SkillFiles, agents: Agen
     } else if (canonicalError !== null) {
       results.push({ agent, status: "failed", path: dir, error: canonicalError });
     } else if (dir === canonicalPath) {
-      results.push({ agent, status: "canonical", path: dir, symlinkFailed: false });
+      results.push({ agent, status: "canonical", path: dir });
     } else if ((await attempt(() => linkSkill(canonicalPath, dir))) === null) {
-      results.push({ agent, status: "symlinked", path: dir, symlinkFailed: false });
+      results.push({ agent, status: "symlinked", path: dir });
     } else {
       const copyError = await attempt(() => writeSkill(dir, files));
-      results.push(copyError ? { agent, status: "failed", path: dir, error: copyError } : { agent, status: "copied", path: dir, symlinkFailed: true });
+      results.push(copyError ? { agent, status: "failed", path: dir, error: copyError } : { agent, status: "copied", path: dir });
     }
   }
   return { name, canonicalPath, agents: results };
 }
 
-export async function existingTargets(name: string, agents: Agent[], options: InstallOptions): Promise<Agent[]> {
-  const found: Agent[] = [];
+export async function replacedDirs(name: string, agents: Agent[], options: InstallOptions): Promise<string[]> {
+  const canonicalPath = canonicalSkillDir(name, options);
+  const dirs = new Set<string>(options.copy ? [] : [canonicalPath]);
   for (const agent of agents) {
     const dir = agentSkillDir(agent, name, options);
-    if (dir !== null && (await lstat(dir).catch(() => null)) !== null) found.push(agent);
+    if (dir !== null) dirs.add(dir);
+  }
+  const target = options.copy ? null : await realpath(canonicalPath).catch(() => null);
+  const found: string[] = [];
+  for (const dir of dirs) {
+    if ((await lstat(dir).catch(() => null)) === null) continue;
+    if (dir !== canonicalPath && target !== null && (await realpath(dir).catch(() => null)) === target) continue;
+    found.push(dir);
   }
   return found;
 }

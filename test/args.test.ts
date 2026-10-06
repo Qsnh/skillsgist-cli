@@ -40,6 +40,16 @@ describe("parseCommandLine", () => {
     expect(options.yes).toBe(true);
   });
 
+  it("stops collecting values at the registry URL", () => {
+    const command = add("add", "-s", "demo-skill", "https://h.example/i/key", "-a", "cursor", "-y");
+    expect(command.url).toBe("https://h.example/i/key");
+    expect(command.options).toMatchObject({ skills: ["demo-skill"], agents: ["cursor"], yes: true });
+    expect(add("add", "-a", "cursor", "http://localhost:8787").url).toBe("http://localhost:8787");
+    expect(failure(() => parseCommandLine(["add", "-s", "demo-skill", "https://a.example", "-a", "cursor", "https://b.example"]))).toBe(
+      "Only one URL can be given",
+    );
+  });
+
   it("expands --all", () => {
     expect(add("add", "https://h.example", "--all").options).toMatchObject({ skills: ["*"], agents: ["*"], yes: true });
   });

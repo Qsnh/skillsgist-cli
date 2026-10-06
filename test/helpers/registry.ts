@@ -12,6 +12,8 @@ export interface Route {
   type?: string;
   headers?: Record<string, string>;
   delayMs?: number;
+  trickle?: { pieces: number; everyMs: number };
+  hangUpAfterBytes?: number;
 }
 
 export interface TestRegistry {
@@ -40,7 +42,25 @@ export async function startRegistry(): Promise<TestRegistry> {
         return;
       }
       res.writeHead(route.status ?? 200, { "content-type": route.type ?? "application/octet-stream", ...route.headers });
-      res.end(route.body);
+      const body = Buffer.from(route.body);
+      if (route.hangUpAfterBytes !== undefined) {
+        res.write(body.subarray(0, route.hangUpAfterBytes), () => res.destroy());
+      } else if (route.trickle) {
+        const { pieces, everyMs } = route.trickle;
+        const size = Math.ceil(body.length / pieces);
+        const next = (offset: number) => {
+          if (res.destroyed) return;
+          if (offset >= body.length) {
+            res.end();
+            return;
+          }
+          res.write(body.subarray(offset, offset + size));
+          setTimeout(() => next(offset + size), everyMs);
+        };
+        next(0);
+      } else {
+        res.end(route.body);
+      }
     };
     if (route?.delayMs) setTimeout(send, route.delayMs);
     else send();

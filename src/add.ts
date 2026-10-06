@@ -4,8 +4,8 @@ import { unpackSkill, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
 import {
   canonicalSkillDir,
-  existingTargets,
   installSkill,
+  replacedDirs,
   type AgentResult,
   type InstallOptions,
   type InstalledAgent,
@@ -60,6 +60,13 @@ export interface AddContext {
 }
 
 export const DEFAULT_AGENTS = ["claude-code", "opencode", "codex"];
+
+const DOWNLOAD_CONCURRENCY = 4;
+
+interface Payload {
+  name: string;
+  files: SkillFiles;
+}
 
 const unique = <T>(items: T[]): T[] => [...new Set(items)];
 
@@ -117,11 +124,11 @@ async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, 
   if (running.inAgent) return withUniversal(running.id === null ? installed : pick([running.id]));
   if (installed.length === 0) {
     if (yes) return universal;
-    const chosen = await ui.selectAgents({ choices: agents.filter((agent) => agent.id !== "eve"), initial: DEFAULT_AGENTS, locked: [] });
+    const chosen = await ui.selectAgents({ choices: agents.filter((agent) => agent.pickable), initial: DEFAULT_AGENTS, locked: [] });
     return chosen === CANCELLED ? CANCELLED : pick(chosen);
   }
   if (installed.length === 1 || yes) return withUniversal(installed);
-  const choices = agents.filter((agent) => !agent.canonical && agent.id !== "eve");
+  const choices = agents.filter((agent) => !agent.canonical && agent.pickable);
   const chosen = await ui.selectAgents({
     choices,
     initial: installed.filter((agent) => choices.includes(agent)).map((agent) => agent.id),
@@ -161,11 +168,33 @@ async function summary(skills: SkillEntry[], targets: Agent[], install: InstallO
       if (shared.length > 0) lines.push(`  universal: ${formatList(shared)}`);
       if (linked.length > 0) lines.push(`  symlink → ${formatList(linked)}`);
     }
-    const overwritten = await existingTargets(skill.name, targets, install);
-    if (overwritten.length > 0) lines.push(`  overwrites: ${formatList(overwritten.map((agent) => agent.displayName))}`);
+    const replaced = await replacedDirs(skill.name, targets, install);
+    if (replaced.length > 0) lines.push(`  overwrites: ${formatList(replaced.map((dir) => shortPath(dir, install.home, install.cwd)))}`);
     blocks.push(lines.join("\n"));
   }
   return blocks.join("\n\n");
+}
+
+async function downloadAll(skills: SkillEntry[], options: FetchOptions = {}): Promise<Payload[]> {
+  const controller = new AbortController();
+  const payloads: Payload[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < skills.length && !controller.signal.aborted) {
+      const position = next;
+      next += 1;
+      const skill = skills[position];
+      const bytes = await downloadArtifact(skill, { ...options, signal: controller.signal });
+      payloads[position] = { name: skill.name, files: unpackSkill(skill.name, bytes) };
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, skills.length) }, worker));
+  } catch (err) {
+    controller.abort();
+    throw err;
+  }
+  return payloads;
 }
 
 function isInstalled(result: AgentResult): result is InstalledAgent {
@@ -214,6 +243,9 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
   const running = detectRunningAgent(context.env, context.exists);
   const agents = loadAgents({ home: context.home, cwd: context.cwd, env: context.env, exists: context.exists });
   const yes = options.yes || running.inAgent;
+  if (!options.list && !yes && !context.interactive) {
+    throw new CliError("There is no terminal to ask questions in. Add -y to install without prompts.");
+  }
   if (running.inAgent) {
     const name = agents.find((agent) => agent.id === running.id)?.displayName ?? "An agent";
     ui.info(`${name} detected — installing non-interactively`);
@@ -232,9 +264,6 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
     ui.outro("Run without --list to install");
     return 0;
   }
-  if (!yes && !context.interactive) {
-    throw new CliError("There is no terminal to ask questions in. Add -y to install without prompts.");
-  }
 
   const skills = await chooseSkills(index.skills, options, yes, ui);
   if (skills === CANCELLED) return cancelled(ui);
@@ -251,8 +280,7 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
     if (proceed === CANCELLED || !proceed) return cancelled(ui);
   }
 
-  const payloads: Array<{ name: string; files: SkillFiles }> = [];
-  for (const skill of skills) payloads.push({ name: skill.name, files: unpackSkill(skill.name, await downloadArtifact(skill, context.fetch)) });
+  const payloads = await downloadAll(skills, context.fetch);
 
   const results: SkillResult[] = [];
   for (const payload of payloads) results.push(await installSkill(payload.name, payload.files, targets, install));

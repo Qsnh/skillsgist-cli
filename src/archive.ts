@@ -38,8 +38,8 @@ export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimi
         return scan.problem === null;
       },
     });
-  } catch {
-    throw new CliError(`${name}: the archive is not a valid zip file`);
+  } catch (err) {
+    throw new CliError(`${name}: the archive cannot be unpacked: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (scan.problem !== null) throw new CliError(`${name}: the archive has ${scan.problem}`);
   const files: SkillFiles = new Map();

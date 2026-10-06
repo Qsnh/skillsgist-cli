@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SkillEntry } from "../src/registry.js";
+import { parseSource } from "../src/source.js";
 
 const multiselect = vi.hoisted(() => vi.fn());
+const message = vi.hoisted(() => vi.fn());
 
-vi.mock("@clack/prompts", () => ({ multiselect, isCancel: () => false }));
+vi.mock("@clack/prompts", () => ({ multiselect, log: { message }, isCancel: () => false }));
 
 const { clackUi } = await import("../src/ui.js");
 
@@ -23,5 +25,16 @@ describe("clackUi", () => {
     const hint: string = multiselect.mock.calls[0][0].options[0].hint;
     expect(hint).toContain("/i/0123…");
     expect(hint).not.toContain(KEY.slice(0, 5));
+  });
+
+  it("strips terminal escapes from what it prints but keeps line breaks", () => {
+    clackUi().message("demo-skill\n  \x1b[2K\x1b[1A\x1b]52;c;ZXZpbA==\x07fake\u009b\u202e");
+    expect(message).toHaveBeenCalledWith("demo-skill\n  [2K[1A]52;c;ZXZpbA==fake");
+  });
+
+  it("masks a key that a control character split in two", () => {
+    parseSource(`https://h.example/i/${KEY}`);
+    clackUi().message(`boom ${KEY.slice(0, 10)}\x1b${KEY.slice(10)} boom`);
+    expect(message).toHaveBeenLastCalledWith("boom 0123… boom");
   });
 });

@@ -26,6 +26,7 @@ interface AgentDef {
   detect: (p: AgentPaths, exists: Exists) => boolean;
   hiddenInPrompt?: boolean;
   unlisted?: boolean;
+  pickable?: boolean;
 }
 
 export interface Agent {
@@ -36,6 +37,7 @@ export interface Agent {
   canonical: boolean;
   universal: boolean;
   hidden: boolean;
+  pickable: boolean;
   installed: boolean;
 }
 
@@ -96,7 +98,7 @@ const AGENTS: AgentDef[] = [
   { id: "devin", displayName: "Devin for Terminal", skillsDir: ".devin/skills", globalDir: (p) => join(p.config, "devin/skills"), detect: (p, exists) => exists(join(p.config, "devin")) },
   { id: "dexto", displayName: "Dexto", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".agents/skills"), detect: (p, exists) => exists(join(p.home, ".dexto")), hiddenInPrompt: true },
   { id: "droid", displayName: "Droid", skillsDir: ".factory/skills", globalDir: (p) => join(p.home, ".factory/skills"), detect: (p, exists) => exists(join(p.home, ".factory")) },
-  { id: "eve", displayName: "Eve", skillsDir: "agent/skills", globalDir: () => null, detect: (p, exists) => exists(join(p.cwd, "agent")) && hasDependency(join(p.cwd, "package.json"), "eve") },
+  { id: "eve", displayName: "Eve", skillsDir: "agent/skills", globalDir: () => null, detect: (p, exists) => exists(join(p.cwd, "agent")) && hasDependency(join(p.cwd, "package.json"), "eve"), pickable: false },
   { id: "firebender", displayName: "Firebender", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".firebender/skills"), detect: (p, exists) => exists(join(p.home, ".firebender")), hiddenInPrompt: true },
   { id: "forgecode", displayName: "ForgeCode", skillsDir: ".forge/skills", globalDir: (p) => join(p.home, ".forge/skills"), detect: (p, exists) => exists(join(p.home, ".forge")) },
   { id: "gemini-cli", displayName: "Gemini CLI", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/skills"), detect: (p, exists) => exists(join(p.home, ".gemini")) },
@@ -146,21 +148,21 @@ const AGENTS: AgentDef[] = [
   { id: "universal", displayName: "Universal", skillsDir: ".agents/skills", globalDir: (p) => join(p.config, "agents/skills"), detect: () => false, unlisted: true },
 ];
 
-const RUNNING_AGENT_IDS: Record<string, string> = {
-  cursor: "cursor",
-  "cursor-cli": "cursor",
-  claude: "claude-code",
-  cowork: "claude-code",
-  devin: "universal",
-  replit: "replit",
-  gemini: "gemini-cli",
-  codex: "codex",
-  antigravity: "antigravity",
-  "augment-cli": "augment",
-  opencode: "opencode",
-  "github-copilot": "github-copilot",
-  "github-copilot-cli": "github-copilot",
-};
+const RUNNING_AGENT_IDS = new Map<string, string>([
+  ["cursor", "cursor"],
+  ["cursor-cli", "cursor"],
+  ["claude", "claude-code"],
+  ["cowork", "claude-code"],
+  ["devin", "universal"],
+  ["replit", "replit"],
+  ["gemini", "gemini-cli"],
+  ["codex", "codex"],
+  ["antigravity", "antigravity"],
+  ["augment-cli", "augment"],
+  ["opencode", "opencode"],
+  ["github-copilot", "github-copilot"],
+  ["github-copilot-cli", "github-copilot"],
+]);
 
 export function agentPaths(home: string, cwd: string, env: NodeJS.ProcessEnv): AgentPaths {
   const dir = (value: string | undefined, fallback: string) => value?.trim() || fallback;
@@ -191,6 +193,7 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
       canonical,
       universal: canonical && def.unlisted !== true,
       hidden: def.hiddenInPrompt === true,
+      pickable: def.pickable !== false,
       installed: def.detect(paths, exists),
     };
   });
@@ -202,12 +205,10 @@ function declaredAgentName(env: NodeJS.ProcessEnv): string | null {
 }
 
 function runningAgentId(name: string): string | null {
-  return RUNNING_AGENT_IDS[name] ?? (AGENTS.some((agent) => agent.id === name) ? name : null);
+  return RUNNING_AGENT_IDS.get(name) ?? (AGENTS.some((agent) => agent.id === name) ? name : null);
 }
 
-function runningAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | null {
-  const declared = declaredAgentName(env);
-  if (declared !== null && runningAgentId(declared) !== null) return declared;
+function signalledAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | null {
   if (env.CURSOR_TRACE_ID) return "cursor";
   if (env.CURSOR_AGENT || env.CURSOR_EXTENSION_HOST_ROLE === "agent-exec") return "cursor-cli";
   if (env.GEMINI_CLI) return "gemini";
@@ -223,10 +224,12 @@ function runningAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | null
 }
 
 export function detectRunningAgent(env: NodeJS.ProcessEnv, exists: Exists = existsSync): RunningAgent {
-  const name = runningAgentName(env, exists);
+  const declared = declaredAgentName(env);
+  const declaredId = declared === null ? null : runningAgentId(declared);
+  if (declaredId !== null) return { inAgent: true, id: declaredId };
+  const name = signalledAgentName(env, exists);
   const strongCursor = Boolean(env.CURSOR_AGENT?.trim()) || env.CURSOR_EXTENSION_HOST_ROLE === "agent-exec";
   const weakCursor = (name === "cursor" || name === "cursor-cli") && !strongCursor;
   if (name !== null && !weakCursor) return { inAgent: true, id: runningAgentId(name) };
-  const declared = declaredAgentName(env);
-  return { inAgent: declared !== null && runningAgentId(declared) === null, id: null };
+  return { inAgent: declared !== null, id: null };
 }

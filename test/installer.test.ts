@@ -3,7 +3,7 @@ import { symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadAgents } from "../src/agents.js";
-import { agentSkillDir, existingTargets, installSkill, sanitizeName, type InstallOptions } from "../src/installer.js";
+import { agentSkillDir, installSkill, replacedDirs, sanitizeName, type InstallOptions } from "../src/installer.js";
 import { cleanup, tempDir } from "./helpers/fs.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -94,7 +94,7 @@ describe("installSkill", () => {
     vi.mocked(symlink).mockRejectedValueOnce(Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" }));
     const result = await installSkill("demo-skill", files, pick("claude-code"), options);
     expect(lstatSync(join(cwd, ".claude/skills/demo-skill")).isDirectory()).toBe(true);
-    expect(result.agents[0]).toMatchObject({ status: "copied", symlinkFailed: true });
+    expect(result.agents[0].status).toBe("copied");
   });
 
   it("reports an agent that cannot install globally", async () => {
@@ -119,11 +119,32 @@ describe("agentSkillDir", () => {
   });
 });
 
-describe("existingTargets", () => {
-  it("lists the agents whose install directory already exists", async () => {
+describe("replacedDirs", () => {
+  it("lists the canonical directory once and each agent directory that holds something else", async () => {
     const { cwd, pick, options } = setup();
+    mkdirSync(join(cwd, ".agents/skills/demo-skill"), { recursive: true });
     mkdirSync(join(cwd, ".claude/skills/demo-skill"), { recursive: true });
-    const found = await existingTargets("demo-skill", pick("claude-code", "windsurf"), options);
-    expect(found.map((agent) => agent.id)).toEqual(["claude-code"]);
+    const found = await replacedDirs("demo-skill", pick("claude-code", "windsurf", "cursor", "codex", "dexto"), options);
+    expect(found).toEqual([join(cwd, ".agents/skills/demo-skill"), join(cwd, ".claude/skills/demo-skill")]);
+  });
+
+  it("leaves out links that already point at the canonical copy", async () => {
+    const { cwd, pick, options } = setup();
+    await installSkill("demo-skill", files, pick("claude-code", "cursor"), options);
+    expect(await replacedDirs("demo-skill", pick("claude-code", "cursor"), options)).toEqual([join(cwd, ".agents/skills/demo-skill")]);
+  });
+
+  it("counts a link that points somewhere else", async () => {
+    const { cwd, pick, options } = setup();
+    mkdirSync(join(cwd, "elsewhere"));
+    mkdirSync(join(cwd, ".claude/skills"), { recursive: true });
+    symlinkSync(join(cwd, "elsewhere"), join(cwd, ".claude/skills/demo-skill"));
+    expect(await replacedDirs("demo-skill", pick("claude-code"), options)).toEqual([join(cwd, ".claude/skills/demo-skill")]);
+  });
+
+  it("lists each existing target directory once with copy", async () => {
+    const { cwd, pick, options } = setup({ copy: true });
+    mkdirSync(join(cwd, ".agents/skills/demo-skill"), { recursive: true });
+    expect(await replacedDirs("demo-skill", pick("claude-code", "cursor", "codex"), options)).toEqual([join(cwd, ".agents/skills/demo-skill")]);
   });
 });

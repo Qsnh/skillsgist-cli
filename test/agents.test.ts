@@ -29,6 +29,10 @@ describe("loadAgents", () => {
     expect(byId(agents, "universal")).toMatchObject({ canonical: true, universal: false });
   });
 
+  it("leaves only Eve out of the agent picker", () => {
+    expect(load().filter((agent) => !agent.pickable).map((agent) => agent.id)).toEqual(["eve"]);
+  });
+
   it("resolves global directories from the home directory", () => {
     const agents = load();
     expect(byId(agents, "claude-code").globalDir).toBe("/h/.claude/skills");
@@ -86,6 +90,11 @@ describe("detectRunningAgent", () => {
     [{ AI_AGENT: "v0", CLAUDECODE: "1" }, "claude-code"],
     [{ AI_AGENT: "v0" }, null],
     [{ AI_AGENT: "v0", CURSOR_TRACE_ID: "t" }, null],
+    [{ AI_AGENT: "cursor" }, "cursor"],
+    [{ AI_AGENT: "cursor-cli" }, "cursor"],
+    [{ AI_AGENT: "cursor-cli", CURSOR_TRACE_ID: "t" }, "cursor"],
+    [{ AI_AGENT: "toString" }, null],
+    [{ AI_AGENT: "constructor", CLAUDECODE: "1" }, "claude-code"],
   ])("maps %j to %s", (env, id) => {
     expect(detectRunningAgent(env, none)).toEqual({ inAgent: true, id });
   });

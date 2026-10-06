@@ -9,18 +9,24 @@ export interface Source {
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const KEY_IN_PATH = /^\/i\/([^/]+)/;
-const ANY_KEY_SEGMENT = /\/i\/([^/\s?#"'`<>]+)/g;
+const ANY_KEY_SEGMENT =
+  /(?<![\w.~/\\-])((?:[a-z][a-z0-9+.-]*:\/\/[^\s/?#"'`<>]+|\[[0-9a-f:.]+\]|localhost|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::\d+)?)\/i\/([^/\s?#"'`<>]+)/gi;
 const MIN_REGISTERED_KEY = 8;
+const UNPRINTABLE = /[\p{Cc}\u202a-\u202e\u2066-\u2069]/gu;
 const knownKeys = new Set<string>();
 
 export function maskKey(key: string): string {
   return key.length > MIN_REGISTERED_KEY ? `${key.slice(0, 4)}…` : "…";
 }
 
+export function printable(text: string): string {
+  return text.replace(UNPRINTABLE, (char) => (char === "\n" || char === "\t" ? char : ""));
+}
+
 export function redact(text: string): string {
   let out = text;
   for (const key of knownKeys) out = out.split(key).join(maskKey(key));
-  return out.replace(ANY_KEY_SEGMENT, (match, segment: string) => (segment.endsWith("…") ? match : `/i/${maskKey(segment)}`));
+  return out.replace(ANY_KEY_SEGMENT, (match, host: string, segment: string) => (segment.endsWith("…") ? match : `${host}/i/${maskKey(segment)}`));
 }
 
 export function parseSource(input: string): Source {

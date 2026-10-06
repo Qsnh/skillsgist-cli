@@ -55,7 +55,15 @@ describe("unpackSkill", () => {
   });
 
   it("rejects bytes that are not a zip", () => {
-    expect(failure(() => unpackSkill("demo-skill", strToU8("not a zip")))).toMatch(/not a valid zip/);
+    expect(failure(() => unpackSkill("demo-skill", strToU8("not a zip")))).toBe("demo-skill: the archive cannot be unpacked: invalid zip data");
+  });
+
+  it("names the compression method it cannot read", () => {
+    const bytes = zipSync({ "SKILL.md": strToU8(skillMd("demo-skill")) }, { level: 0 });
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    view.setUint16(8, 9, true);
+    view.setUint16(view.getUint32(bytes.length - 6, true) + 10, 9, true);
+    expect(failure(() => unpackSkill("demo-skill", bytes))).toBe("demo-skill: the archive cannot be unpacked: unknown compression type 9");
   });
 });
 

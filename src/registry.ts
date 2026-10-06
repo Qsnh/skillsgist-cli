@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { CliError } from "./errors.js";
-import { redact, type Source } from "./source.js";
+import { printable, redact, type Source } from "./source.js";
 
 export const DISCOVERY_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
+export const MAX_INDEX_BYTES = 10 * 1024 * 1024;
 export const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
 
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -24,6 +25,18 @@ export interface Index {
 
 export interface FetchOptions {
   timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+interface Watchdog {
+  signal: AbortSignal;
+  reset(): void;
+  stop(): void;
+}
+
+interface Reply {
+  res: Response;
+  watchdog: Watchdog;
 }
 
 export function indexCandidates(source: Source): string[] {
@@ -39,30 +52,80 @@ function reason(err: unknown): string {
   return cause?.code ?? cause?.message ?? (err instanceof Error ? err.message : String(err));
 }
 
-async function request(url: string, options: FetchOptions): Promise<Response> {
+function watchdog(ms: number): Watchdog {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const reset = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(new DOMException("The operation timed out.", "TimeoutError")), ms).unref();
+  };
+  reset();
+  return { signal: controller.signal, reset, stop: () => clearTimeout(timer) };
+}
+
+async function request(url: string, options: FetchOptions): Promise<Reply> {
+  const dog = watchdog(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([dog.signal, options.signal]) : dog.signal;
   try {
-    return await fetch(url, { redirect: "error", signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS) });
+    return { res: await fetch(url, { redirect: "error", signal }), watchdog: dog };
   } catch (err) {
+    dog.stop();
     throw new CliError(`Could not reach ${redact(url)}: ${redact(reason(err))}`);
+  }
+}
+
+async function discard({ res, watchdog }: Reply): Promise<void> {
+  watchdog.stop();
+  await res.body?.cancel();
+}
+
+async function readCapped({ res, watchdog }: Reply, limit: number, label: string, failure: string): Promise<Uint8Array> {
+  try {
+    if (Number(res.headers.get("content-length") ?? 0) > limit) {
+      await res.body?.cancel();
+      throw new CliError(`${label} is larger than ${limit} bytes`);
+    }
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    if (res.body) {
+      for await (const chunk of res.body) {
+        watchdog.reset();
+        total += chunk.length;
+        if (total > limit) throw new CliError(`${label} is larger than ${limit} bytes`);
+        chunks.push(chunk);
+      }
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return bytes;
+  } catch (err) {
+    if (err instanceof CliError) throw err;
+    throw new CliError(`${failure}: ${redact(reason(err))}`);
+  } finally {
+    watchdog.stop();
   }
 }
 
 export async function fetchIndex(source: Source, options: FetchOptions = {}): Promise<Index | null> {
   for (const url of indexCandidates(source)) {
-    const res = await request(url, options);
-    if (res.status === 404) {
-      await res.body?.cancel();
+    const reply = await request(url, options);
+    if (reply.res.status === 404) {
+      await discard(reply);
       continue;
     }
-    if (!res.ok) {
-      await res.body?.cancel();
-      throw new CliError(`${redact(url)} answered HTTP ${res.status}`);
+    if (!reply.res.ok) {
+      await discard(reply);
+      throw new CliError(`${redact(url)} answered HTTP ${reply.res.status}`);
     }
+    const bytes = await readCapped(reply, MAX_INDEX_BYTES, redact(url), `Could not reach ${redact(url)}`);
     let body: unknown;
     try {
-      body = await res.json();
-    } catch (err) {
-      if (err instanceof Error && err.name === "TimeoutError") throw new CliError(`Could not reach ${redact(url)}: timed out`);
+      body = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
       throw new CliError(`${redact(url)} is not valid JSON`);
     }
     return parseIndex(body, url, source.origin);
@@ -70,9 +133,13 @@ export async function fetchIndex(source: Source, options: FetchOptions = {}): Pr
   return null;
 }
 
+function cleanDescription(text: string): string {
+  return printable(text).replace(/\s+/g, " ").trim();
+}
+
 function entryProblem(entry: Record<string, unknown>, indexUrl: string, origin: string): string | null {
   if (typeof entry.name !== "string" || entry.name.length > 64 || !NAME_RE.test(entry.name)) return "invalid name";
-  if (typeof entry.description !== "string" || entry.description.trim() === "" || entry.description.length > 1024) {
+  if (typeof entry.description !== "string" || cleanDescription(entry.description) === "" || entry.description.length > 1024) {
     return "invalid description";
   }
   if (entry.type !== "archive") return "unsupported type";
@@ -86,28 +153,6 @@ function entryProblem(entry: Record<string, unknown>, indexUrl: string, origin: 
   }
   if (url.origin !== origin) return "url points to another origin";
   return null;
-}
-
-async function readCapped(res: Response, name: string): Promise<Uint8Array> {
-  if (Number(res.headers.get("content-length") ?? 0) > MAX_ARTIFACT_BYTES) {
-    await res.body?.cancel();
-    throw new CliError(`${name} is larger than ${MAX_ARTIFACT_BYTES} bytes`);
-  }
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    if (res.body) {
-      for await (const chunk of res.body) {
-        total += chunk.length;
-        if (total > MAX_ARTIFACT_BYTES) throw new CliError(`${name} is larger than ${MAX_ARTIFACT_BYTES} bytes`);
-        chunks.push(chunk);
-      }
-    }
-  } catch (err) {
-    if (err instanceof CliError) throw err;
-    throw new CliError(`Downloading ${name} failed: ${redact(reason(err))}`);
-  }
-  return new Uint8Array(Buffer.concat(chunks));
 }
 
 export function parseIndex(body: unknown, indexUrl: string, origin: string): Index {
@@ -127,7 +172,7 @@ export function parseIndex(body: unknown, indexUrl: string, origin: string): Ind
     }
     skills.push({
       name: entry.name as string,
-      description: entry.description as string,
+      description: cleanDescription(entry.description as string),
       url: new URL(entry.url as string, indexUrl).href,
       digest: entry.digest as string,
     });
@@ -136,12 +181,12 @@ export function parseIndex(body: unknown, indexUrl: string, origin: string): Ind
 }
 
 export async function downloadArtifact(entry: SkillEntry, options: FetchOptions = {}): Promise<Uint8Array> {
-  const res = await request(entry.url, options);
-  if (!res.ok) {
-    await res.body?.cancel();
-    throw new CliError(`Downloading ${entry.name} failed: HTTP ${res.status}`);
+  const reply = await request(entry.url, options);
+  if (!reply.res.ok) {
+    await discard(reply);
+    throw new CliError(`Downloading ${entry.name} failed: HTTP ${reply.res.status}`);
   }
-  const bytes = await readCapped(res, entry.name);
+  const bytes = await readCapped(reply, MAX_ARTIFACT_BYTES, entry.name, `Downloading ${entry.name} failed`);
   const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   if (digest !== entry.digest) throw new CliError(`${entry.name} does not match its sha256 digest`);
   return bytes;

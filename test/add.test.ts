@@ -123,9 +123,11 @@ describe("runAdd", () => {
     expect(readdirSync(box.home)).toEqual([]);
   });
 
-  it("refuses to prompt without a terminal", async () => {
+  it("refuses to prompt without a terminal before asking the registry anything", async () => {
     const box = sandbox({}, false);
+    const before = registry.requests.length;
     await expect(runAdd(url, options(), box.context(fakeUi().ui))).rejects.toThrow(/Add -y/);
+    expect(registry.requests.length).toBe(before);
   });
 
   it("asks for skills, agents, scope and confirmation when no agent is detected", async () => {
@@ -201,6 +203,37 @@ describe("runAdd", () => {
     expect(readdirSync(box.home)).toEqual([]);
   });
 
+  it("downloads the artifacts side by side and installs them in index order", async () => {
+    const box = sandbox();
+    const names = ["slow-one", "slow-two", "slow-three"];
+    publishIndex(registry, "/slow", names.map((name) => ({ name, zip: skillZip(name) })));
+    for (const [path, route] of registry.routes) if (path.startsWith("/slow/d/")) route.delayMs = 300;
+    const ui = fakeUi();
+    const started = Date.now();
+    expect(await runAdd(`${registry.origin}/slow`, options({ yes: true }), box.context(ui.ui))).toBe(0);
+    expect(Date.now() - started).toBeLessThan(800);
+    expect(ui.text()).toContain("✓ ./.agents/skills/slow-one\n  universal: Amp, Antigravity, Antigravity CLI, Cline, Codex +8 more\n✓ ./.agents/skills/slow-two");
+    expect(readdirSync(join(box.cwd, ".agents/skills")).sort()).toEqual(["slow-one", "slow-three", "slow-two"]);
+  });
+
+  it("stops at the first failed download without waiting for the others", async () => {
+    const box = sandbox();
+    publishIndex(registry, "/stuck", [
+      { name: "stuck-skill", zip: skillZip("stuck-skill") },
+      { name: "broken-skill", zip: skillZip("broken-skill") },
+    ]);
+    for (const [path, route] of registry.routes) {
+      if (path.startsWith("/stuck/d/stuck-skill/")) route.trickle = { pieces: 2, everyMs: 5000 };
+      if (path.startsWith("/stuck/d/broken-skill/")) route.body = skillZip("broken-skill", { "evil.md": "x" });
+    }
+    const started = Date.now();
+    await expect(runAdd(`${registry.origin}/stuck`, options({ yes: true }), box.context(fakeUi().ui))).rejects.toThrow(
+      "broken-skill does not match its sha256 digest",
+    );
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(readdirSync(box.cwd)).toEqual([]);
+  });
+
   it("refuses a named agent that cannot install globally", async () => {
     const box = sandbox();
     await expect(
@@ -229,15 +262,25 @@ describe("runAdd", () => {
     await expect(runAdd(url, options({ agents: ["nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow(/Invalid agents: nope/);
   });
 
-  it("survives running the same install twice and reports the overwrite", async () => {
+  it("survives running the same install twice and reports only the copy it replaces", async () => {
     const box = sandbox();
     mkdirSync(join(box.home, ".claude"));
     const first = fakeUi();
     expect(await runAdd(url, options({ skills: ["demo-skill"], yes: true }), box.context(first.ui))).toBe(0);
+    expect(first.text()).not.toContain("overwrites:");
     const second = fakeUi();
     expect(await runAdd(url, options({ skills: ["demo-skill"], yes: true }), box.context(second.ui))).toBe(0);
-    expect(second.text()).toContain("overwrites: Claude Code");
+    expect(second.text()).toContain("symlink → Claude Code\n  overwrites: ./.agents/skills/demo-skill\n");
     expect(existsSync(join(box.cwd, ".claude/skills/demo-skill/SKILL.md"))).toBe(true);
+  });
+
+  it("reports an agent directory that holds its own copy", async () => {
+    const box = sandbox();
+    mkdirSync(join(box.home, ".claude"));
+    mkdirSync(join(box.cwd, ".claude/skills/demo-skill"), { recursive: true });
+    const ui = fakeUi();
+    expect(await runAdd(url, options({ skills: ["demo-skill"], yes: true }), box.context(ui.ui))).toBe(0);
+    expect(ui.text()).toContain("overwrites: ./.claude/skills/demo-skill\n");
   });
 
   it("copies with --copy and says where", async () => {
