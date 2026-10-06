@@ -1,8 +1,10 @@
 name: Publish
 
-# Publishes to npm through trusted publishing (OIDC): no npm token is
-# stored in the repository. npmjs.com must list this repository and
-# publish.yml as the package's trusted publisher.
+# Stages a release on npm through trusted publishing (OIDC): no npm token
+# is stored in the repository. npmjs.com must list this repository and
+# publish.yml as the package's trusted publisher. The trusted publisher
+# may only stage, so a maintainer approves each version with 2FA, on
+# npmjs.com or with `npm stage approve <stage-id>`, before it goes live.
 on:
   push:
     tags:
@@ -31,4 +33,4 @@ jobs:
           fi
       - run: npm ci
       # prepublishOnly runs npm test (build and the full suite) first.
-      - run: npm publish
+      - run: npm stage publish --provenance
