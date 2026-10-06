@@ -163,3 +163,45 @@ describe("skillsgist add", () => {
     expect(result.stderr).toContain("Usage: skillsgist add <url> [options]");
   });
 });
+
+describe("skillsgist agents", () => {
+  it("lists the agents without touching the network or the disk", async () => {
+    const box = sandbox();
+    mkdirSync(join(box.home, ".claude"));
+    const result = await run(box, ["agents"]);
+    expect(result.code).toBe(0);
+    expect(result.output).toMatch(/^73 agents\. /);
+    expect(result.output).toMatch(/^✓ {2}claude-code +Claude Code +\.claude\/skills +~\/\.claude\/skills$/m);
+    expect(result.output).toMatch(/^ {3}amp +Amp +\.agents\/skills +~\/\.agents\/skills$/m);
+    expect(result.output).not.toContain("\x1b");
+    expect(result.connections).toEqual([]);
+    expect(readdirSync(box.home)).toEqual([".claude"]);
+    expect(readdirSync(box.cwd)).toEqual([]);
+  });
+
+  it("says what add installs for inside an agent, above the same list", async () => {
+    const box = sandbox();
+    const note = "Inside Claude Code, `skillsgist add <url>` without -a installs for claude-code and the agents that read .agents/skills, whatever is ticked.\n";
+    const plain = await run(box, ["agents"]);
+    const inside = await run(box, ["agents"], { CLAUDECODE: "1" });
+    expect(inside.code).toBe(0);
+    expect(plain.output).not.toContain(note);
+    expect(inside.output).toContain(note);
+    expect(inside.output.replace(note, "")).toBe(plain.output);
+  });
+
+  it("ticks agents detected in the current directory", async () => {
+    const box = sandbox();
+    mkdirSync(join(box.cwd, "data/skills"), { recursive: true });
+    const result = await run(box, ["agents"]);
+    expect(result.output).toMatch(/^✓ {2}astrbot /m);
+  });
+
+  it("rejects an argument with the usage", async () => {
+    const box = sandbox();
+    const result = await run(box, ["agents", "claude-code"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Unexpected argument: claude-code");
+    expect(result.stderr).toContain("skillsgist agents");
+  });
+});
