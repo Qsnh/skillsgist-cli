@@ -25,6 +25,7 @@ async function main(argv: string[]): Promise<number> {
       process.stdout.write(listAgents({ home: homedir(), cwd: process.cwd(), env: process.env }));
       return 0;
     }
+    if (command.kind === "list") return 0;
     return await runAdd(command.url, command.options, {
       ui,
       home: homedir(),
