@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { lstat, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { CANONICAL_SKILLS_DIR, type Agent } from "./agents.js";
@@ -48,10 +49,17 @@ export function sanitizeName(name: string): string {
   );
 }
 
-function isInside(base: string, target: string): boolean {
+export function within(base: string, target: string): string | null {
   const root = resolve(base);
   const path = resolve(target);
-  return path !== root && path.startsWith(root.endsWith(sep) ? root : root + sep);
+  if (path === root) return "";
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  return path.startsWith(prefix) ? path.slice(prefix.length) : null;
+}
+
+function isInside(base: string, target: string): boolean {
+  const rest = within(base, target);
+  return rest !== null && rest !== "";
 }
 
 function inside(base: string, name: string): string {
@@ -84,7 +92,16 @@ export function locator(): Locator {
   return { real, located };
 }
 
-async function refusal(dir: string, agent: Agent | null, canonicalPath: string, options: InstallOptions, where: Locator): Promise<string | null> {
+const entry = (path: string): Promise<Stats | null> => lstat(path).catch(() => null);
+
+async function refusal(
+  dir: string,
+  agent: Agent | null,
+  canonicalPath: string,
+  options: InstallOptions,
+  where: Locator,
+  existing?: Stats | null,
+): Promise<string | null> {
   if (options.global || options.confirmed) return null;
   const real = await where.located(dir);
   const shown = `.${sep}${relative(options.cwd, dir)}`;
@@ -92,8 +109,8 @@ async function refusal(dir: string, agent: Agent | null, canonicalPath: string, 
     return `${shown} leads out of the project to ${real}; install from a terminal without -y to confirm`;
   }
   if (!agent?.projectOwned) return null;
-  const existing = await lstat(dir).catch(() => null);
-  if (existing === null || existing.isSymbolicLink() || real === (await where.located(canonicalPath))) return null;
+  const found = existing === undefined ? await entry(dir) : existing;
+  if (found === null || found.isSymbolicLink() || real === (await where.located(canonicalPath))) return null;
   return `${shown} already exists and is not a link; remove it, or install from a terminal without -y to replace it`;
 }
 
@@ -113,7 +130,7 @@ async function linkSkill(canonicalPath: string, linkPath: string): Promise<void>
   const target = await realpath(canonicalPath);
   const link = join(await realpath(dirname(linkPath)), basename(linkPath));
   if (link === target) return;
-  const existing = await lstat(linkPath).catch(() => null);
+  const existing = await entry(linkPath);
   if (existing?.isSymbolicLink() && (await realpath(linkPath).catch(() => null)) === target) return;
   if (existing) await rm(linkPath, { recursive: true, force: true });
   if (process.platform === "win32") await symlink(target, linkPath, "junction");
@@ -190,13 +207,13 @@ function targetDirs(name: string, agents: Agent[], options: InstallOptions): Map
 
 export async function replacedDirs(name: string, agents: Agent[], options: InstallOptions, where: Locator = locator()): Promise<string[]> {
   const canonicalPath = canonicalSkillDir(name, options);
-  const target = options.copy ? null : await realpath(canonicalPath).catch(() => null);
   const dirs = [...targetDirs(name, agents, options)];
   const replaced = await Promise.all(
     dirs.map(async ([dir, agent]) => {
-      if ((await lstat(dir).catch(() => null)) === null) return false;
-      if (dir !== canonicalPath && target !== null && (await realpath(dir).catch(() => null)) === target) return false;
-      return (await refusal(dir, agent, canonicalPath, options, where)) === null;
+      const existing = await entry(dir);
+      if (existing === null) return false;
+      if (!options.copy && dir !== canonicalPath && (await where.real(dir)) === (await where.real(canonicalPath))) return false;
+      return (await refusal(dir, agent, canonicalPath, options, where, existing)) === null;
     }),
   );
   return dirs.filter((_, index) => replaced[index]).map(([dir]) => dir);

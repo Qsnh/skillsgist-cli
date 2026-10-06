@@ -147,7 +147,7 @@ Artifacts are downloaded up to 4 at a time. The first failure aborts the other d
 - **Agent directory:**
   - Universal agents use the canonical directory.
   - Other agents use `<cwd>/<projectDir>/<name>` (project) or `<globalDir>/<name>` (global).
-- **Eve:** as in `npx skills` 1.5.18, Eve never gets a link. In both modes it gets its own copy in `agent/skills/<name>`, whose `SKILL.md` frontmatter is parsed with `yaml` and cut to `description` and `license` (when they are strings) and the string values of `metadata`, each written back as a JSON value; a `SKILL.md` without frontmatter only loses a leading blank line. Frontmatter that is not valid YAML fails Eve's install alone. If `agent/skills/<name>` already resolves to the canonical directory (because `agent/skills` is a link to `.agents/skills`), it is left as it is, so the other agents keep the full `SKILL.md`.
+- **Eve:** as in `npx skills` 1.5.18, Eve never gets a link. In both modes it gets its own copy in `agent/skills/<name>`, whose `SKILL.md` frontmatter is parsed with `yaml` and cut to `description` and `license` (when they are strings) and the string values of `metadata`, each written back as a JSON value; a `SKILL.md` without frontmatter only loses a leading blank line. If `agent/skills/<name>` already resolves to the canonical directory (because `agent/skills` is a link to `.agents/skills`), it is left as it is, so the other agents keep the full `SKILL.md`.
 - **Path safety:** every resolved directory must lie strictly inside its base; otherwise the run fails.
 - **Symlink mode** (default):
   1. Remove the canonical directory if present and write the files there.
@@ -193,7 +193,7 @@ Unpacked in memory with `fflate`. The rules:
 - **Paths:** reject an absolute path, a drive letter, a backslash, and an empty, `.` or `..` segment.
 - **Entries:** every entry is written as a regular file. A symlink entry is never turned into a link; its bytes land as an ordinary file. The digest check already guarantees the bytes are the ones the registry published.
 - **Limits:** at most 1000 files and 50 MiB unpacked, the same as `npx skills`.
-- **Root:** the archive must contain `SKILL.md` at its root, with YAML frontmatter holding a string `name` and a string `description`.
+- **Root:** the archive must contain `SKILL.md` at its root, with YAML frontmatter holding a non-empty string `name` and a non-empty string `description`. The frontmatter is found and parsed as `npx skills` does it, the same way Eve's copy is cut; frontmatter that is not valid YAML rejects the skill.
 - **Writing:** every file's resolved target must lie inside the skill directory.
 
 Directory entries are ignored. Files are written with default permissions, as `npx skills` does.

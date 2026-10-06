@@ -1,4 +1,4 @@
-import { resolve, sep } from "node:path";
+import { sep } from "node:path";
 import { detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
 import { unpackSkill, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
@@ -8,6 +8,7 @@ import {
   locator,
   outsideDirs,
   replacedDirs,
+  within,
   type AgentResult,
   type InstallOptions,
   type InstalledAgent,
@@ -87,10 +88,9 @@ function formatList(items: string[], max = 5): string {
 }
 
 function under(path: string, base: string, mark: string): string | null {
-  const root = resolve(base);
-  const prefix = root.endsWith(sep) ? root : root + sep;
-  if (path === root) return mark;
-  return path.startsWith(prefix) ? `${mark}${sep}${path.slice(prefix.length)}` : null;
+  const rest = within(base, path);
+  if (rest === null) return null;
+  return rest === "" ? mark : `${mark}${sep}${rest}`;
 }
 
 export function shortPath(path: string, home: string, cwd: string): string {

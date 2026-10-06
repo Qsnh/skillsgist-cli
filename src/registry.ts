@@ -18,7 +18,6 @@ export interface SkillEntry {
 }
 
 export interface Index {
-  url: string;
   skills: SkillEntry[];
   warnings: string[];
 }
@@ -157,24 +156,24 @@ export function parseIndex(body: unknown, indexUrl: string, origin: string): Ind
   if (record === null || typeof record !== "object" || record.$schema !== DISCOVERY_SCHEMA || !Array.isArray(record.skills)) {
     throw new CliError(`${redact(indexUrl)} is not a discovery 0.2.0 index`);
   }
-  const skills: SkillEntry[] = [];
+  const skills = new Map<string, SkillEntry>();
   const warnings: string[] = [];
   record.skills.forEach((raw: unknown, position: number) => {
     const entry = (raw !== null && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
     const label = typeof entry.name === "string" && NAME_RE.test(entry.name) ? entry.name : `#${position + 1}`;
-    const problem = entryProblem(entry, indexUrl, origin) ?? (skills.some((skill) => skill.name === entry.name) ? "duplicate name" : null);
+    const problem = entryProblem(entry, indexUrl, origin) ?? (skills.has(entry.name as string) ? "duplicate name" : null);
     if (problem !== null) {
       warnings.push(`Skipped index entry ${label}: ${problem}`);
       return;
     }
-    skills.push({
+    skills.set(entry.name as string, {
       name: entry.name as string,
       description: cleanDescription(entry.description as string),
       url: new URL(entry.url as string, indexUrl).href,
       digest: entry.digest as string,
     });
   });
-  return { url: indexUrl, skills, warnings };
+  return { skills: [...skills.values()], warnings };
 }
 
 export async function downloadArtifact(entry: SkillEntry, options: FetchOptions = {}): Promise<Uint8Array> {

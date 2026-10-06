@@ -47,7 +47,8 @@ describe("fetchIndex", () => {
 
   it("falls back to /.well-known/skills when agent-skills is missing", async () => {
     publishIndex(registry, `/i/${KEY}`, [{ name: "demo-skill", zip: skillZip("demo-skill") }], { wellKnown: "skills" });
-    expect((await fetchIndex(keyed()))?.url).toBe(`${registry.origin}/i/${KEY}/.well-known/skills/index.json`);
+    expect((await fetchIndex(keyed()))?.skills.map((skill) => skill.name)).toEqual(["demo-skill"]);
+    expect(registry.requests).toEqual([indexPath, `/i/${KEY}/.well-known/skills/index.json`]);
   });
 
   it("returns null when neither candidate exists and never asks the origin's root", async () => {

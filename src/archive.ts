@@ -11,18 +11,28 @@ export interface ArchiveLimits {
 
 export const DEFAULT_LIMITS: ArchiveLimits = { maxFiles: 1000, maxBytes: 50 * 1024 * 1024 };
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
-const FRONTMATTER_AND_BODY = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
 export function isSafeArchivePath(path: string): boolean {
   if (path === "" || path.startsWith("/") || path.includes("\\") || path.includes("\0") || /^[a-zA-Z]:/.test(path)) return false;
   return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
+function parseFrontmatter(skillMd: string): { data: Record<string, unknown>; body: string } {
+  const match = FRONTMATTER.exec(skillMd);
+  if (match === null) return { data: {}, body: skillMd };
+  try {
+    return { data: (parse(match[1], { logLevel: "error" }) ?? {}) as Record<string, unknown>, body: match[2] };
+  } catch {
+    throw new Error("SKILL.md has frontmatter that is not valid YAML");
+  }
+}
+
+const filled = (value: unknown) => typeof value === "string" && value !== "";
+
 export function hasNameAndDescription(skillMd: string): boolean {
-  const block = FRONTMATTER.exec(skillMd.replace(/^\uFEFF/, ""))?.[1];
-  if (block === undefined) return false;
-  return /^name:[ \t]*\S/m.test(block) && /^description:[ \t]*\S/m.test(block);
+  const { data } = parseFrontmatter(skillMd.replace(/^\uFEFF/, ""));
+  return filled(data.name) && filled(data.description);
 }
 
 export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimits = DEFAULT_LIMITS): SkillFiles {
@@ -53,25 +63,19 @@ export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimi
   if (total > limits.maxBytes) throw new CliError(`${name}: the archive has more than ${limits.maxBytes} bytes unpacked`);
   const skillMd = files.get("SKILL.md");
   if (skillMd === undefined) throw new CliError(`${name}: the archive has no SKILL.md at its root`);
-  if (!hasNameAndDescription(new TextDecoder().decode(skillMd))) {
-    throw new CliError(`${name}: SKILL.md has no name and description in its frontmatter`);
+  let valid: boolean;
+  try {
+    valid = hasNameAndDescription(new TextDecoder().decode(skillMd));
+  } catch (err) {
+    throw new CliError(`${name}: ${(err as Error).message}`);
   }
+  if (!valid) throw new CliError(`${name}: SKILL.md has no name and description in its frontmatter`);
   return files;
 }
 
-function frontmatterData(block: string): Record<string, unknown> {
-  try {
-    return (parse(block, { logLevel: "error" }) ?? {}) as Record<string, unknown>;
-  } catch {
-    throw new Error("SKILL.md has frontmatter that is not valid YAML");
-  }
-}
-
 export function trimFrontmatter(files: SkillFiles): SkillFiles {
-  const skillMd = new TextDecoder().decode(files.get("SKILL.md"));
-  const match = FRONTMATTER_AND_BODY.exec(skillMd);
-  const data = match === null ? {} : frontmatterData(match[1]);
-  const body = (match === null ? skillMd : match[2]).replace(/^\r?\n/, "");
+  const { data, body: rest } = parseFrontmatter(new TextDecoder().decode(files.get("SKILL.md")));
+  const body = rest.replace(/^\r?\n/, "");
   const kept: Record<string, unknown> = {};
   if (typeof data.description === "string") kept.description = data.description;
   if (typeof data.license === "string") kept.license = data.license;

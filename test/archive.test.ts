@@ -54,6 +54,11 @@ describe("unpackSkill", () => {
     expect(failure(() => unpackSkill("demo-skill", zip({ "SKILL.md": "---\nname: demo-skill\n---\n" })))).toMatch(/no name and description/);
   });
 
+  it("names frontmatter that is not valid YAML", () => {
+    const bytes = zip({ "SKILL.md": "---\nname: demo-skill\ndescription: [oops\n---\n" });
+    expect(failure(() => unpackSkill("demo-skill", bytes))).toBe("demo-skill: SKILL.md has frontmatter that is not valid YAML");
+  });
+
   it("rejects bytes that are not a zip", () => {
     expect(failure(() => unpackSkill("demo-skill", strToU8("not a zip")))).toBe("demo-skill: the archive cannot be unpacked: invalid zip data");
   });
@@ -92,5 +97,22 @@ describe("hasNameAndDescription", () => {
 
   it("rejects an empty name", () => {
     expect(hasNameAndDescription("---\nname:\ndescription: y\n---\n")).toBe(false);
+    expect(hasNameAndDescription('---\nname: ""\ndescription: y\n---\n')).toBe(false);
+  });
+
+  it.each(["name: ~\ndescription: y", "name: 123\ndescription: y", "name: x\ndescription: [a]", "name: x\ndescription:\n  a: b"])(
+    "rejects a name or description that is not a string: %j",
+    (block) => {
+      expect(hasNameAndDescription(`---\n${block}\n---\n`)).toBe(false);
+    },
+  );
+
+  it.each([
+    "---\nname: x\ndescription:\n  continued text\n---\n",
+    '---\n"name": x\n\'description\': y\n---\n',
+    "---\nname: x\ndescription: y\n---  \nBody\n",
+    "---\nname: x\ndescription: y\n---",
+  ])("accepts any YAML that gives both as strings: %j", (skillMd) => {
+    expect(hasNameAndDescription(skillMd)).toBe(true);
   });
 });
