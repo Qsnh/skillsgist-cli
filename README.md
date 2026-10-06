@@ -15,7 +15,7 @@ npx skillsgist add https://skills.example.com/i/<install_key>
 - a bare `https://host/i/<key>` is looked up on `api.github.com`;
 - it prints the full URL.
 
-`npx skillsgist add` installs into the same directories for the same agents, and:
+`npx skillsgist add` installs into the same directories for the same agents, except Eve, and:
 
 - writes nothing but the skill files and their symlinks: no lock file, no state, no cache;
 - talks to no host but the one in the URL, and never follows a redirect;
