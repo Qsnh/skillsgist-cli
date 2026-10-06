@@ -55,6 +55,9 @@ export function parseCommandLine(argv: string[]): Command {
       case "-h":
       case "--help":
         return { kind: "help" };
+      case "-v":
+      case "--version":
+        return { kind: "version" };
       case "-a":
       case "--agent":
       case "-s":

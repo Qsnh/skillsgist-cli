@@ -12,7 +12,8 @@ function show(text: string): string {
 }
 
 function hint(text: string): string {
-  return text.length > 60 ? `${text.slice(0, 57)}…` : text;
+  const chars = [...text];
+  return chars.length > 60 ? `${chars.slice(0, 57).join("")}…` : text;
 }
 
 export function clackUi(): Ui {
@@ -21,7 +22,7 @@ export function clackUi(): Ui {
     step: (message) => clack.log.step(show(message)),
     info: (message) => clack.log.info(show(message)),
     warn: (message) => clack.log.warn(show(message)),
-    error: (message) => clack.log.error(show(message)),
+    error: (message) => clack.log.error(show(message), { output: process.stderr }),
     message: (message) => clack.log.message(show(message)),
     note: (body, title) => clack.note(show(body), show(title)),
     cancel: (message) => clack.cancel(show(message)),

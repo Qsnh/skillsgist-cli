@@ -18,6 +18,7 @@ interface Sandbox {
 interface Result {
   code: number;
   output: string;
+  stderr: string;
   connections: string[];
 }
 
@@ -60,7 +61,7 @@ function run(box: Sandbox, args: string[], env: Record<string, string> = {}): Pr
       },
       (error, stdout, stderr) => {
         const connections = existsSync(box.log) ? readFileSync(box.log, "utf8").split("\n").filter(Boolean) : [];
-        done({ code: error ? Number(error.code ?? 1) : 0, output: `${stdout}${stderr}`, connections });
+        done({ code: error ? Number(error.code ?? 1) : 0, output: `${stdout}${stderr}`, stderr, connections });
       },
     );
   });
@@ -158,7 +159,7 @@ describe("skillsgist add", () => {
     const box = sandbox();
     const result = await run(box, ["add", `${registry.origin}/i/${KEY}`, "--full-depth"]);
     expect(result.code).toBe(1);
-    expect(result.output).toContain("Unknown option: --full-depth");
-    expect(result.output).toContain("Usage: skillsgist add <url> [options]");
+    expect(result.stderr).toContain("Unknown option: --full-depth");
+    expect(result.stderr).toContain("Usage: skillsgist add <url> [options]");
   });
 });

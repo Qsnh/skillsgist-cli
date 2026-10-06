@@ -1,10 +1,11 @@
 import { sep } from "node:path";
-import { detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
+import { agentDisplayName, detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
 import { unpackSkill, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
 import {
   canonicalSkillDir,
   installSkill,
+  outsideDirs,
   replacedDirs,
   type AgentResult,
   type InstallOptions,
@@ -68,6 +69,11 @@ interface Payload {
   files: SkillFiles;
 }
 
+interface Selection {
+  agents: Agent[];
+  implied: Set<Agent>;
+}
+
 const unique = <T>(items: T[]): T[] => [...new Set(items)];
 
 function plural(count: number, word: string): string {
@@ -107,34 +113,37 @@ async function chooseSkills(all: SkillEntry[], options: AddOptions, yes: boolean
   return ui.selectSkills(all);
 }
 
-async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, running: RunningAgent, ui: Ui): Promise<Cancellable<Agent[]>> {
+async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, running: RunningAgent, ui: Ui): Promise<Cancellable<Selection>> {
   const byId = new Map(agents.map((agent) => [agent.id, agent]));
   const pick = (ids: string[]) => unique(ids).map((id) => byId.get(id) as Agent);
   const universal = agents.filter((agent) => agent.universal);
-  const withUniversal = (list: Agent[]) => [...list, ...universal.filter((agent) => !list.includes(agent))];
-  if (options.agents?.includes("*")) return agents;
+  const select = (picked: Agent[], extra: Agent[] = []): Selection => {
+    const implied = extra.filter((agent) => !picked.includes(agent));
+    return { agents: [...picked, ...implied], implied: new Set(implied) };
+  };
+  if (options.agents?.includes("*")) return select([], agents);
   if (options.agents) {
     const invalid = options.agents.filter((id) => !byId.has(id));
     if (invalid.length > 0) {
       throw new CliError(`Invalid agents: ${invalid.join(", ")}. Valid agents: ${agents.map((agent) => agent.id).join(", ")}`);
     }
-    return pick(options.agents);
+    return select(pick(options.agents));
   }
   const installed = agents.filter((agent) => agent.installed);
-  if (running.inAgent) return withUniversal(running.id === null ? installed : pick([running.id]));
+  if (running.inAgent) return select(running.id === null ? installed : pick([running.id]), universal);
   if (installed.length === 0) {
-    if (yes) return universal;
+    if (yes) return select([], universal);
     const chosen = await ui.selectAgents({ choices: agents.filter((agent) => agent.pickable), initial: DEFAULT_AGENTS, locked: [] });
-    return chosen === CANCELLED ? CANCELLED : pick(chosen);
+    return chosen === CANCELLED ? CANCELLED : select(pick(chosen));
   }
-  if (installed.length === 1 || yes) return withUniversal(installed);
+  if (installed.length === 1 || yes) return select(installed, universal);
   const choices = agents.filter((agent) => !agent.canonical && agent.pickable);
   const chosen = await ui.selectAgents({
     choices,
     initial: installed.filter((agent) => choices.includes(agent)).map((agent) => agent.id),
     locked: universal.filter((agent) => !agent.hidden),
   });
-  return chosen === CANCELLED ? CANCELLED : withUniversal(pick(chosen));
+  return chosen === CANCELLED ? CANCELLED : select(pick(chosen), universal);
 }
 
 async function chooseScope(targets: Agent[], options: AddOptions, yes: boolean, ui: Ui): Promise<Cancellable<boolean>> {
@@ -143,33 +152,36 @@ async function chooseScope(targets: Agent[], options: AddOptions, yes: boolean, 
   return ui.selectScope();
 }
 
-function forScope(targets: Agent[], global: boolean, options: AddOptions): Agent[] {
-  if (!global) return targets;
-  const unsupported = targets.filter((agent) => agent.globalDir === null);
-  if (unsupported.length > 0 && options.agents !== null && !options.agents.includes("*")) {
-    throw new CliError(`${unsupported.map((agent) => agent.displayName).join(", ")} cannot install skills globally`);
-  }
-  const supported = targets.filter((agent) => agent.globalDir !== null);
+function forScope(selection: Selection, global: boolean, options: AddOptions, ui: Ui): Agent[] {
+  if (!global) return selection.agents;
+  const chosen = selection.agents.filter((agent) => agent.globalDir === null && !selection.implied.has(agent));
+  const names = chosen.map((agent) => agent.displayName).join(", ");
+  if (chosen.length > 0 && options.agents !== null) throw new CliError(`${names} cannot install skills globally`);
+  const supported = selection.agents.filter((agent) => agent.globalDir !== null);
   if (supported.length === 0) throw new CliError("None of the selected agents can install skills globally");
+  if (chosen.length > 0) ui.warn(`Skipping ${names}: no global skills directory`);
   return supported;
 }
 
 async function summary(skills: SkillEntry[], targets: Agent[], install: InstallOptions): Promise<string> {
+  const short = (path: string) => shortPath(path, install.home, install.cwd);
+  const everyone = formatList(targets.map((agent) => agent.displayName));
+  const shared = formatList(sharedNames(targets));
+  const linked = formatList(targets.filter((agent) => !agent.canonical).map((agent) => agent.displayName));
   const blocks: string[] = [];
   for (const skill of skills) {
     const lines: string[] = [];
     if (install.copy) {
       lines.push(`${skill.name} (copy)`);
-      lines.push(`  copy → ${formatList(targets.map((agent) => agent.displayName))}`);
+      lines.push(`  copy → ${everyone}`);
     } else {
-      lines.push(shortPath(canonicalSkillDir(skill.name, install), install.home, install.cwd));
-      const shared = sharedNames(targets);
-      const linked = targets.filter((agent) => !agent.canonical).map((agent) => agent.displayName);
-      if (shared.length > 0) lines.push(`  universal: ${formatList(shared)}`);
-      if (linked.length > 0) lines.push(`  symlink → ${formatList(linked)}`);
+      lines.push(short(canonicalSkillDir(skill.name, install)));
+      if (shared !== "") lines.push(`  universal: ${shared}`);
+      if (linked !== "") lines.push(`  symlink → ${linked}`);
     }
     const replaced = await replacedDirs(skill.name, targets, install);
-    if (replaced.length > 0) lines.push(`  overwrites: ${formatList(replaced.map((dir) => shortPath(dir, install.home, install.cwd)))}`);
+    if (replaced.length > 0) lines.push(`  overwrites: ${formatList(replaced.map(short))}`);
+    for (const [dir, real] of await outsideDirs(skill.name, targets, install)) lines.push(`  outside the project: ${short(dir)} → ${short(real)}`);
     blocks.push(lines.join("\n"));
   }
   return blocks.join("\n\n");
@@ -177,14 +189,15 @@ async function summary(skills: SkillEntry[], targets: Agent[], install: InstallO
 
 async function downloadAll(skills: SkillEntry[], options: FetchOptions = {}): Promise<Payload[]> {
   const controller = new AbortController();
+  const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   const payloads: Payload[] = [];
   let next = 0;
   const worker = async () => {
-    while (next < skills.length && !controller.signal.aborted) {
+    while (next < skills.length && !signal.aborted) {
       const position = next;
       next += 1;
       const skill = skills[position];
-      const bytes = await downloadArtifact(skill, { ...options, signal: controller.signal });
+      const bytes = await downloadArtifact(skill, { ...options, signal });
       payloads[position] = { name: skill.name, files: unpackSkill(skill.name, bytes) };
     }
   };
@@ -231,24 +244,19 @@ function report(results: SkillResult[], install: InstallOptions, ui: Ui): void {
   }
   if (installed > 0) ui.note(lines.join("\n"), `Installed ${plural(installed, "skill")}`);
   if (fallbacks.length > 0) ui.warn(`Symlinks failed for: ${formatList(unique(fallbacks))}. Files were copied instead.`);
-  if (failures.length > 0) {
-    ui.error(`Failed to install ${failures.length}`);
-    ui.message(failures.join("\n"));
-  }
+  if (failures.length > 0) ui.error([`Failed to install ${failures.length}`, ...failures].join("\n"));
 }
 
 export async function runAdd(url: string, options: AddOptions, context: AddContext): Promise<number> {
   const { ui } = context;
   const source = parseSource(url);
   const running = detectRunningAgent(context.env, context.exists);
-  const agents = loadAgents({ home: context.home, cwd: context.cwd, env: context.env, exists: context.exists });
   const yes = options.yes || running.inAgent;
   if (!options.list && !yes && !context.interactive) {
     throw new CliError("There is no terminal to ask questions in. Add -y to install without prompts.");
   }
   if (running.inAgent) {
-    const name = agents.find((agent) => agent.id === running.id)?.displayName ?? "An agent";
-    ui.info(`${name} detected — installing non-interactively`);
+    ui.info(`${agentDisplayName(running.id) ?? "An agent"} detected — installing non-interactively`);
   } else {
     ui.intro("skillsgist");
   }
@@ -267,12 +275,13 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
 
   const skills = await chooseSkills(index.skills, options, yes, ui);
   if (skills === CANCELLED) return cancelled(ui);
+  const agents = loadAgents({ home: context.home, cwd: context.cwd, env: context.env, exists: context.exists });
   const chosen = await chooseAgents(agents, options, yes, running, ui);
   if (chosen === CANCELLED) return cancelled(ui);
-  const global = await chooseScope(chosen, options, yes, ui);
+  const global = await chooseScope(chosen.agents, options, yes, ui);
   if (global === CANCELLED) return cancelled(ui);
-  const targets = forScope(chosen, global, options);
-  const install: InstallOptions = { global, copy: options.copy, home: context.home, cwd: context.cwd };
+  const targets = forScope(chosen, global, options, ui);
+  const install: InstallOptions = { global, copy: options.copy, confirmed: !yes, home: context.home, cwd: context.cwd };
 
   ui.note(await summary(skills, targets, install), "Installation Summary");
   if (!yes) {

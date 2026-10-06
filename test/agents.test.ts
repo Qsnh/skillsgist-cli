@@ -99,8 +99,16 @@ describe("detectRunningAgent", () => {
     expect(detectRunningAgent(env, none)).toEqual({ inAgent: true, id });
   });
 
-  it("treats a bare Cursor terminal as no agent, even with Claude Code inside it", () => {
-    expect(detectRunningAgent({ CURSOR_TRACE_ID: "t", CLAUDECODE: "1" }, none)).toEqual({ inAgent: false, id: null });
+  it("treats a bare Cursor terminal as no agent", () => {
+    expect(detectRunningAgent({ CURSOR_TRACE_ID: "t" }, none)).toEqual({ inAgent: false, id: null });
+  });
+
+  it.each<[NodeJS.ProcessEnv, string]>([
+    [{ CURSOR_TRACE_ID: "t", CLAUDECODE: "1" }, "claude-code"],
+    [{ CURSOR_TRACE_ID: "t", CODEX_THREAD_ID: "x" }, "codex"],
+    [{ CURSOR_TRACE_ID: "t", GEMINI_CLI: "1" }, "gemini-cli"],
+  ])("finds the agent running in a Cursor terminal from %j", (env, id) => {
+    expect(detectRunningAgent(env, none)).toEqual({ inAgent: true, id });
   });
 
   it("maps Devin's marker file to the universal directory", () => {

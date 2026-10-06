@@ -179,7 +179,7 @@ describe("downloadArtifact", () => {
     const zip = skillZip("demo-skill");
     publishIndex(registry, `/i/${KEY}`, [{ name: "demo-skill", zip }]);
     const index = await fetchIndex(keyed());
-    expect(await downloadArtifact(index!.skills[0])).toEqual(zip);
+    expect(await downloadArtifact(index!.skills[0])).toEqual(Buffer.from(zip));
   });
 
   it("waits as long as the artifact keeps arriving", async () => {
@@ -187,7 +187,7 @@ describe("downloadArtifact", () => {
     publishIndex(registry, `/i/${KEY}`, [{ name: "demo-skill", zip }]);
     const index = await fetchIndex(keyed());
     registry.routes.get(new URL(index!.skills[0].url).pathname)!.trickle = { pieces: 6, everyMs: 50 };
-    expect(await downloadArtifact(index!.skills[0], { timeoutMs: 200 })).toEqual(zip);
+    expect(await downloadArtifact(index!.skills[0], { timeoutMs: 200 })).toEqual(Buffer.from(zip));
   });
 
   it("gives up when the artifact stops arriving", async () => {

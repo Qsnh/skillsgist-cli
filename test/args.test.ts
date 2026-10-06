@@ -60,6 +60,8 @@ describe("parseCommandLine", () => {
     expect(parseCommandLine(["add", "-h"])).toEqual({ kind: "help" });
     expect(parseCommandLine(["-v"])).toEqual({ kind: "version" });
     expect(parseCommandLine(["--version"])).toEqual({ kind: "version" });
+    expect(parseCommandLine(["add", "https://h.example", "-v"])).toEqual({ kind: "version" });
+    expect(parseCommandLine(["add", "https://h.example", "--version"])).toEqual({ kind: "version" });
   });
 
   it("rejects unknown commands and options", () => {

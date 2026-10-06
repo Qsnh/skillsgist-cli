@@ -209,7 +209,6 @@ function runningAgentId(name: string): string | null {
 }
 
 function signalledAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | null {
-  if (env.CURSOR_TRACE_ID) return "cursor";
   if (env.CURSOR_AGENT || env.CURSOR_EXTENSION_HOST_ROLE === "agent-exec") return "cursor-cli";
   if (env.GEMINI_CLI) return "gemini";
   if (env.CODEX_SANDBOX || env.CODEX_CI || env.CODEX_THREAD_ID) return "codex";
@@ -228,8 +227,10 @@ export function detectRunningAgent(env: NodeJS.ProcessEnv, exists: Exists = exis
   const declaredId = declared === null ? null : runningAgentId(declared);
   if (declaredId !== null) return { inAgent: true, id: declaredId };
   const name = signalledAgentName(env, exists);
-  const strongCursor = Boolean(env.CURSOR_AGENT?.trim()) || env.CURSOR_EXTENSION_HOST_ROLE === "agent-exec";
-  const weakCursor = (name === "cursor" || name === "cursor-cli") && !strongCursor;
-  if (name !== null && !weakCursor) return { inAgent: true, id: runningAgentId(name) };
+  if (name !== null) return { inAgent: true, id: runningAgentId(name) };
   return { inAgent: declared !== null, id: null };
+}
+
+export function agentDisplayName(id: string | null): string | null {
+  return AGENTS.find((agent) => agent.id === id)?.displayName ?? null;
 }

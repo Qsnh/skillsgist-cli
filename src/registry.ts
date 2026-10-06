@@ -95,13 +95,7 @@ async function readCapped({ res, watchdog }: Reply, limit: number, label: string
         chunks.push(chunk);
       }
     }
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return bytes;
+    return Buffer.concat(chunks, total);
   } catch (err) {
     if (err instanceof CliError) throw err;
     throw new CliError(`${failure}: ${redact(reason(err))}`);

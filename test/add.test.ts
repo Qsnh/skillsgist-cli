@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { CANCELLED, runAdd, type AddContext, type AddOptions, type AgentRequest, type Ui } from "../src/add.js";
@@ -94,6 +94,7 @@ describe("runAdd", () => {
     expect(ui.text()).toContain("universal: Amp, Antigravity, Antigravity CLI, Cline, Codex +8 more");
     expect(ui.text()).toContain("symlinked: Claude Code");
     expect(ui.text()).not.toContain("Failed");
+    expect(ui.text()).not.toContain("Skipping");
     expect(ui.text()).not.toContain(KEY);
     expect(readdirSync(box.cwd)).toEqual([]);
     expect(filesContaining(box.home, KEY)).toEqual([]);
@@ -121,6 +122,14 @@ describe("runAdd", () => {
     expect(ui.text()).toContain("other-skill");
     expect(readdirSync(box.cwd)).toEqual([]);
     expect(readdirSync(box.home)).toEqual([]);
+  });
+
+  it("does not look for installed agents with --list", async () => {
+    const box = sandbox({}, false);
+    const looked: string[] = [];
+    const context = { ...box.context(fakeUi().ui), exists: (path: string) => (looked.push(path), false) };
+    expect(await runAdd(url, options({ list: true }), context)).toBe(0);
+    expect(looked).toEqual(["/opt/.devin"]);
   });
 
   it("refuses to prompt without a terminal before asking the registry anything", async () => {
@@ -234,6 +243,27 @@ describe("runAdd", () => {
     expect(readdirSync(box.cwd)).toEqual([]);
   });
 
+  it("says which picked agents it skips in global scope", async () => {
+    const box = sandbox();
+    const ui = fakeUi({ agents: ["claude-code", "promptscript"], scope: true, confirm: true });
+    expect(await runAdd(url, options({ skills: ["demo-skill"] }), box.context(ui.ui))).toBe(0);
+    expect(ui.text()).toContain("warn: Skipping PromptScript: no global skills directory");
+    expect(lstatSync(join(box.home, ".claude/skills/demo-skill")).isSymbolicLink()).toBe(true);
+  });
+
+  it("stops the downloads when the caller's signal aborts", async () => {
+    const box = sandbox();
+    publishIndex(registry, "/cancel", [{ name: "slow-skill", zip: skillZip("slow-skill") }]);
+    for (const [path, route] of registry.routes) if (path.startsWith("/cancel/d/")) route.trickle = { pieces: 2, everyMs: 5000 };
+    const controller = new AbortController();
+    const context = { ...box.context(fakeUi().ui), fetch: { signal: controller.signal } };
+    setTimeout(() => controller.abort(), 300);
+    const started = Date.now();
+    await expect(runAdd(`${registry.origin}/cancel`, options({ yes: true }), context)).rejects.toThrow(/Downloading slow-skill failed/);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(readdirSync(box.cwd)).toEqual([]);
+  });
+
   it("refuses a named agent that cannot install globally", async () => {
     const box = sandbox();
     await expect(
@@ -281,6 +311,31 @@ describe("runAdd", () => {
     const ui = fakeUi();
     expect(await runAdd(url, options({ skills: ["demo-skill"], yes: true }), box.context(ui.ui))).toBe(0);
     expect(ui.text()).toContain("overwrites: ./.claude/skills/demo-skill\n");
+  });
+
+  it("leaves a project's own skills/ directory alone with -y and says why", async () => {
+    const box = sandbox();
+    mkdirSync(join(box.home, ".claude"));
+    mkdirSync(join(box.home, ".openclaw"));
+    mkdirSync(join(box.cwd, "skills/demo-skill"), { recursive: true });
+    writeFileSync(join(box.cwd, "skills/demo-skill/SKILL.md"), "mine");
+    const ui = fakeUi();
+    expect(await runAdd(url, options({ skills: ["demo-skill"], yes: true }), box.context(ui.ui))).toBe(1);
+    expect(readFileSync(join(box.cwd, "skills/demo-skill/SKILL.md"), "utf8")).toBe("mine");
+    expect(ui.text()).not.toContain("overwrites: ./skills");
+    expect(ui.text()).toContain("✗ demo-skill → OpenClaw: ./skills/demo-skill already exists and is not a link");
+    expect(lstatSync(join(box.cwd, ".claude/skills/demo-skill")).isSymbolicLink()).toBe(true);
+  });
+
+  it("shows where a directory that leads out of the project really is before asking", async () => {
+    const box = sandbox();
+    const outside = tempDir();
+    mkdirSync(join(box.cwd, ".claude"));
+    symlinkSync(outside, join(box.cwd, ".claude/skills"));
+    const ui = fakeUi({ agents: ["claude-code"], scope: false, confirm: true });
+    expect(await runAdd(url, options({ skills: ["demo-skill"] }), box.context(ui.ui))).toBe(0);
+    expect(ui.text()).toContain(`outside the project: ./.claude/skills/demo-skill → ${join(outside, "demo-skill")}`);
+    expect(lstatSync(join(outside, "demo-skill")).isSymbolicLink()).toBe(true);
   });
 
   it("copies with --copy and says where", async () => {

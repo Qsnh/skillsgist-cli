@@ -46,6 +46,20 @@ describe("parseSource", () => {
     expect(source.display).toBe("https://skills.example.com/i/0123…/.well-known/agent-skills/demo-skill");
   });
 
+  it.each([`https://skills.example.com//i/${KEY}`, `https://skills.example.com/i//${KEY}/`, `https://skills.example.com/%69/${KEY}`])(
+    "registers the key of %s and masks it everywhere",
+    (url) => {
+      const source = parseSource(url);
+      expect(source.key).toBe(KEY);
+      expect(source.display).not.toContain(KEY);
+      expect(redact(`No skills found at ${url}`)).not.toContain(KEY);
+    },
+  );
+
+  it("collapses repeated slashes in the base", () => {
+    expect(parseSource(`https://skills.example.com//i//${KEY}//`).base).toBe(`/i/${KEY}`);
+  });
+
   it.each(["http://localhost:8787", "http://127.0.0.1:8787/p/team", "http://[::1]:8080"])(
     "accepts plain http to the loopback address %s",
     (url) => {
@@ -84,13 +98,17 @@ describe("redact", () => {
     expect(redact(`https://h.example/i/${OTHER}/d/x/1.zip`)).toBe("https://h.example/i/fedc…/d/x/1.zip");
   });
 
-  it.each([`skills.example.com/i/${OTHER}`, `localhost:8787/i/${OTHER}`, `"https://h.example/i/${OTHER}"`, `(http://[::1]:8080/i/${OTHER})`])(
-    "masks the key in %s",
-    (text) => {
-      expect(redact(text)).not.toContain(OTHER);
-      expect(redact(text)).toContain("/i/fedc…");
-    },
-  );
+  it.each([
+    `skills.example.com/i/${OTHER}`,
+    `localhost:8787/i/${OTHER}`,
+    `"https://h.example/i/${OTHER}"`,
+    `(http://[::1]:8080/i/${OTHER})`,
+    `skills.example.com//i/${OTHER}`,
+    `https://h.example/i//${OTHER}`,
+  ])("masks the key in %s", (text) => {
+    expect(redact(text)).not.toContain(OTHER);
+    expect(redact(text)).toMatch(/\/i\/+fedc…/);
+  });
 
   it.each([
     "✓ /srv/i/project/.claude/skills/demo",

@@ -7,6 +7,7 @@ import { CliError } from "./errors.js";
 export interface InstallOptions {
   global: boolean;
   copy: boolean;
+  confirmed: boolean;
   home: string;
   cwd: string;
 }
@@ -62,6 +63,30 @@ export function agentSkillDir(agent: Agent, name: string, options: InstallOption
   return inside(options.global ? (agent.globalDir as string) : join(options.cwd, agent.skillsDir), name);
 }
 
+function holdsProjectFiles(agent: Agent | null): boolean {
+  return agent !== null && !agent.skillsDir.startsWith(".");
+}
+
+async function located(path: string): Promise<string> {
+  const parent = dirname(path);
+  const real = await realpath(parent).catch(() => null);
+  if (real !== null) return join(real, basename(path));
+  return parent === path ? path : join(await located(parent), basename(path));
+}
+
+async function refusal(dir: string, agent: Agent | null, canonicalPath: string, options: InstallOptions): Promise<string | null> {
+  if (options.global || options.confirmed) return null;
+  const real = await located(dir);
+  const shown = `.${sep}${relative(options.cwd, dir)}`;
+  if (!isInside(await realpath(options.cwd), real)) {
+    return `${shown} leads out of the project to ${real}; install from a terminal without -y to confirm`;
+  }
+  if (!holdsProjectFiles(agent)) return null;
+  const existing = await lstat(dir).catch(() => null);
+  if (existing === null || existing.isSymbolicLink() || real === (await located(canonicalPath))) return null;
+  return `${shown} already exists and is not a link; remove it, or install from a terminal without -y to replace it`;
+}
+
 async function writeSkill(dir: string, files: SkillFiles): Promise<void> {
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
@@ -90,7 +115,7 @@ async function attempt(action: () => Promise<void>): Promise<string | null> {
     await action();
     return null;
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    return (err instanceof Error && err.message) || String(err);
   }
 }
 
@@ -101,6 +126,8 @@ function unsupported(agent: Agent): FailedAgent {
 export async function installSkill(name: string, files: SkillFiles, agents: Agent[], options: InstallOptions): Promise<SkillResult> {
   const canonicalPath = canonicalSkillDir(name, options);
   const results: AgentResult[] = [];
+  const guarded = async (dir: string, agent: Agent | null, action: () => Promise<void>) =>
+    (await refusal(dir, agent, canonicalPath, options)) ?? (await attempt(action));
   if (options.copy) {
     const written = new Map<string, string | null>();
     for (const agent of agents) {
@@ -109,44 +136,63 @@ export async function installSkill(name: string, files: SkillFiles, agents: Agen
         results.push(unsupported(agent));
         continue;
       }
-      if (!written.has(dir)) written.set(dir, await attempt(() => writeSkill(dir, files)));
-      const error = written.get(dir);
-      results.push(error ? { agent, status: "failed", path: dir, error } : { agent, status: "copied", path: dir });
+      if (!written.has(dir)) written.set(dir, await guarded(dir, agent, () => writeSkill(dir, files)));
+      const error = written.get(dir) ?? null;
+      results.push(error !== null ? { agent, status: "failed", path: dir, error } : { agent, status: "copied", path: dir });
     }
     return { name, canonicalPath, agents: results };
   }
-  const canonicalError = await attempt(() => writeSkill(canonicalPath, files));
+  const canonicalError = await guarded(canonicalPath, null, () => writeSkill(canonicalPath, files));
   for (const agent of agents) {
     const dir = agentSkillDir(agent, name, options);
     if (dir === null) {
       results.push(unsupported(agent));
-    } else if (canonicalError !== null) {
-      results.push({ agent, status: "failed", path: dir, error: canonicalError });
+      continue;
+    }
+    const error = canonicalError ?? (dir === canonicalPath ? null : await refusal(dir, agent, canonicalPath, options));
+    if (error !== null) {
+      results.push({ agent, status: "failed", path: dir, error });
     } else if (dir === canonicalPath) {
       results.push({ agent, status: "canonical", path: dir });
     } else if ((await attempt(() => linkSkill(canonicalPath, dir))) === null) {
       results.push({ agent, status: "symlinked", path: dir });
     } else {
       const copyError = await attempt(() => writeSkill(dir, files));
-      results.push(copyError ? { agent, status: "failed", path: dir, error: copyError } : { agent, status: "copied", path: dir });
+      results.push(copyError !== null ? { agent, status: "failed", path: dir, error: copyError } : { agent, status: "copied", path: dir });
     }
   }
   return { name, canonicalPath, agents: results };
 }
 
-export async function replacedDirs(name: string, agents: Agent[], options: InstallOptions): Promise<string[]> {
-  const canonicalPath = canonicalSkillDir(name, options);
-  const dirs = new Set<string>(options.copy ? [] : [canonicalPath]);
+function targetDirs(name: string, agents: Agent[], options: InstallOptions): Map<string, Agent | null> {
+  const dirs = new Map<string, Agent | null>(options.copy ? [] : [[canonicalSkillDir(name, options), null]]);
   for (const agent of agents) {
     const dir = agentSkillDir(agent, name, options);
-    if (dir !== null) dirs.add(dir);
+    if (dir !== null && !dirs.has(dir)) dirs.set(dir, agent);
   }
+  return dirs;
+}
+
+export async function replacedDirs(name: string, agents: Agent[], options: InstallOptions): Promise<string[]> {
+  const canonicalPath = canonicalSkillDir(name, options);
   const target = options.copy ? null : await realpath(canonicalPath).catch(() => null);
   const found: string[] = [];
-  for (const dir of dirs) {
+  for (const [dir, agent] of targetDirs(name, agents, options)) {
     if ((await lstat(dir).catch(() => null)) === null) continue;
     if (dir !== canonicalPath && target !== null && (await realpath(dir).catch(() => null)) === target) continue;
+    if ((await refusal(dir, agent, canonicalPath, options)) !== null) continue;
     found.push(dir);
+  }
+  return found;
+}
+
+export async function outsideDirs(name: string, agents: Agent[], options: InstallOptions): Promise<Array<[string, string]>> {
+  if (options.global) return [];
+  const root = await realpath(options.cwd);
+  const found: Array<[string, string]> = [];
+  for (const dir of targetDirs(name, agents, options).keys()) {
+    const real = await located(dir);
+    if (!isInside(root, real)) found.push([dir, real]);
   }
   return found;
 }

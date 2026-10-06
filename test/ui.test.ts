@@ -4,8 +4,9 @@ import { parseSource } from "../src/source.js";
 
 const multiselect = vi.hoisted(() => vi.fn());
 const message = vi.hoisted(() => vi.fn());
+const error = vi.hoisted(() => vi.fn());
 
-vi.mock("@clack/prompts", () => ({ multiselect, log: { message }, isCancel: () => false }));
+vi.mock("@clack/prompts", () => ({ multiselect, log: { message, error }, isCancel: () => false }));
 
 const { clackUi } = await import("../src/ui.js");
 
@@ -25,6 +26,18 @@ describe("clackUi", () => {
     const hint: string = multiselect.mock.calls[0][0].options[0].hint;
     expect(hint).toContain("/i/0123…");
     expect(hint).not.toContain(KEY.slice(0, 5));
+  });
+
+  it("cuts a long hint between characters, not inside one", async () => {
+    multiselect.mockResolvedValue(["demo-skill"]);
+    await clackUi().selectSkills([skill(`${"x".repeat(56)}😀${"y".repeat(10)}`)]);
+    const hint: string = multiselect.mock.lastCall![0].options[0].hint;
+    expect(hint).toBe(`${"x".repeat(56)}😀…`);
+  });
+
+  it("writes errors to stderr", () => {
+    clackUi().error("boom");
+    expect(error).toHaveBeenCalledWith("boom", { output: process.stderr });
   });
 
   it("strips terminal escapes from what it prints but keeps line breaks", () => {

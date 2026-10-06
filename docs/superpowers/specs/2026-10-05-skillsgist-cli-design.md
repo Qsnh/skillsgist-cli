@@ -131,8 +131,8 @@ All requests use `fetch` with `redirect: "error"` and send no credentials or cus
      - Two or more found, interactive: a multiselect where the universal agents form a locked, always-included group and the detected agents are preselected.
    - No choice is remembered between runs.
 5. **Scope.** `-g` means global. Otherwise `-y` means project. Otherwise a select prompt: Project (first), Global.
-   - In global scope, agents without a global directory (`eve`, `promptscript`) are dropped from the targets if they were selected automatically, and are an error if named with `-a`.
-6. **Confirm.** Without `-y`, show a summary (skills, agents, scope, method, and which existing directories will be overwritten: the canonical directory, plus any agent directory that holds something other than a link to it; a link already pointing at the canonical directory is kept and not listed) and ask to proceed. Cancelling at any prompt prints `Installation cancelled` and exits 0.
+   - In global scope, agents without a global directory (`eve`, `promptscript`) are an error if named with `-a`. Otherwise they are dropped from the targets: silently if they only came in as universal agents or through `-a '*'`, with a warning if they were picked in the prompt or detected.
+6. **Confirm.** Without `-y`, show a summary (skills, agents, scope, method, and which existing directories will be overwritten: the canonical directory, plus any agent directory that holds something other than a link to it; a link already pointing at the canonical directory is kept and not listed; plus, in project scope, any target directory whose real location is outside the project, with that location) and ask to proceed. Cancelling at any prompt prints `Installation cancelled` and exits 0.
 7. **Download.** For each selected skill, download the artifact, check its sha256 against `digest`, and unpack it in memory. Any failure aborts the whole run before anything is written.
 8. **Install.** See Installation. Then print the result.
 
@@ -151,9 +151,14 @@ Artifacts are downloaded up to 4 at a time. The first failure aborts the other d
 - **Symlink mode** (default):
   1. Remove the canonical directory if present and write the files there.
   2. For each non-universal agent, link its directory to the canonical directory with a relative symlink (a junction with an absolute target on Windows).
-     - An existing symlink already pointing at the target is kept; anything else at that path is removed first.
+     - An existing symlink already pointing at the target is kept; anything else at that path is removed first, subject to Project safety.
      - If creating the link fails, fall back to copying into that agent directory and print a warning.
-- **Copy mode** (`--copy`): for each distinct target directory, remove it if present and write the files.
+- **Copy mode** (`--copy`): for each distinct target directory, remove it if present and write the files, subject to Project safety.
+- **Project safety:** in project scope without a confirmed summary (with `-y`, or inside an agent), a target fails instead of being written when:
+  - its real location, after resolving symlinks in its parent directories, is outside the project; or
+  - it belongs to an agent whose project directory is not under a dot-folder (OpenClaw's `skills/`, AstrBot's `data/skills/`, Eve's `agent/skills/`), and something other than a symlink is already there, since such a folder may hold the project's own skills.
+
+  A link left by an earlier install is replaced as usual. The failure says why, and the summary leaves these directories out of `overwrites`.
 - **Partial failure:** all downloads have passed by the time writing starts. If writing fails for some skill and agent, the remaining writes continue. The result lists the successes and the failures, and the exit code is 1. There is no rollback.
 
 ## Output
@@ -168,11 +173,13 @@ Built with `@clack/prompts` so it looks like `npx skills`. Paths are shortened b
 └  Done!
 ```
 
-In copy mode: `✓ demo-skill (copied)` followed by one `→ <path>` line per target directory. The skillsgist agent prompt tells the agent to open the `SKILL.md` in the directory this output reports, so the `✓ <canonical path>` line must keep this shape.
+In copy mode: `✓ demo-skill (copied)` followed by one `→ <path>` line per target directory.
+
+Errors, and the usage printed with them, go to stderr; everything else goes to stdout. The skillsgist agent prompt tells the agent to open the `SKILL.md` in the directory this output reports, so the `✓ <canonical path>` line must keep this shape.
 
 ## Key masking
 
-`source.ts` records the key of an `/i/<key>` URL at parse time. `redact(text)` replaces every occurrence of that key with its first 4 characters followed by `…`, and also masks any other `/i/<segment>` that directly follows a host (`scheme://host`, a dotted host name, `localhost` or a bracketed IPv6 address, each with an optional port), so a filesystem path such as `/srv/i/project` is printed unchanged. Every string the CLI prints, including error messages and causes from `fetch`, has its control characters (other than newline and tab) and bidi overrides removed and then goes through `redact()`. Stack traces are never printed, and there is no debug switch.
+`source.ts` records the key of an `/i/<key>` URL at parse time: repeated slashes in the path are collapsed first (the requests use the collapsed path too), the `i` segment is compared after percent-decoding, and both the key as typed and its percent-decoded form are recorded. `redact(text)` replaces every occurrence of that key with its first 4 characters followed by `…`, and also masks any other `/i/<segment>` that directly follows a host, repeated slashes included (`scheme://host`, a dotted host name, `localhost` or a bracketed IPv6 address, each with an optional port), so a filesystem path such as `/srv/i/project` is printed unchanged. Every string the CLI prints, including error messages and causes from `fetch`, has its control characters (other than newline and tab) and bidi overrides removed and then goes through `redact()`. Stack traces are never printed, and there is no debug switch.
 
 ## Archive handling
 
@@ -219,7 +226,6 @@ Checked in this order, as in `@vercel/detect-agent`, which 1.5.18 bundles:
 | Signal | Agent |
 |---|---|
 | `AI_AGENT` | its value up to the first `_` or `/` (`claude-code_2-1-280_harness` → claude-code), if that names an agent |
-| `CURSOR_TRACE_ID` | cursor |
 | `CURSOR_AGENT`, or `CURSOR_EXTENSION_HOST_ROLE=agent-exec` | cursor |
 | `GEMINI_CLI` | gemini-cli |
 | `CODEX_SANDBOX`, `CODEX_CI`, `CODEX_THREAD_ID` | codex |
@@ -233,7 +239,7 @@ Checked in this order, as in `@vercel/detect-agent`, which 1.5.18 bundles:
 
 Notes:
 
-- A plain `CURSOR_TRACE_ID` without the strong Cursor signal is treated as "not in an agent", as 1.5.18 does.
+- `CURSOR_TRACE_ID` alone is not a signal: Cursor's terminal sets it for people too. 1.5.18 stops at it and reports "not in an agent"; here the remaining signals are still checked, so Claude Code or Codex running in Cursor's terminal is found.
 - `AI_AGENT` names an agent when its normalised value is a known agent id or one of the names `@vercel/detect-agent` reports (`claude`, `cowork`, `cursor-cli`, `gemini`, `augment-cli`, `github-copilot-cli`, ...). A value that names no agent does not stop the checks: the remaining signals are checked in order, so `AI_AGENT=v0` with `CLAUDECODE=1` resolves to claude-code.
 - If no signal names an agent but `AI_AGENT` is set, the CLI is still treated as being in an agent, and the targets are the detected installed agents plus the universal agents.
 

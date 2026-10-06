@@ -18,7 +18,7 @@ export function isSafeArchivePath(path: string): boolean {
 }
 
 export function hasNameAndDescription(skillMd: string): boolean {
-  const block = FRONTMATTER.exec(skillMd.replace(/^﻿/, ""))?.[1];
+  const block = FRONTMATTER.exec(skillMd.replace(/^\uFEFF/, ""))?.[1];
   if (block === undefined) return false;
   return /^name:[ \t]*\S/m.test(block) && /^description:[ \t]*\S/m.test(block);
 }
