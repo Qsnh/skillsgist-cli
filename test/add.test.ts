@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { CANCELLED, runAdd, type AddContext, type AddOptions, type AgentRequest, type Ui } from "../src/add.js";
+import { CANCELLED, runAdd, shortPath, type AddContext, type AddOptions, type AgentRequest, type Ui } from "../src/add.js";
 import type { SkillEntry } from "../src/registry.js";
 import { cleanup, filesContaining, sandboxExists, tempDir } from "./helpers/fs.js";
 import { KEY, publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
@@ -114,6 +114,16 @@ describe("runAdd", () => {
     expect(filesContaining(box.home, KEY)).toEqual([]);
   });
 
+  it("names Devin when it finds Devin's marker file", async () => {
+    const box = sandbox();
+    const ui = fakeUi();
+    const exists = sandboxExists(box.home, box.cwd);
+    const context = { ...box.context(ui.ui), exists: (path: string) => path === "/opt/.devin" || exists(path) };
+    expect(await runAdd(url, options({ skills: ["demo-skill"] }), context)).toBe(0);
+    expect(ui.text()).toContain("Devin detected — installing non-interactively");
+    expect(existsSync(join(box.cwd, ".agents/skills/demo-skill/SKILL.md"))).toBe(true);
+  });
+
   it("lists skills without installing or needing a terminal", async () => {
     const box = sandbox({}, false);
     const ui = fakeUi();
@@ -216,11 +226,17 @@ describe("runAdd", () => {
     const box = sandbox();
     const names = ["slow-one", "slow-two", "slow-three"];
     publishIndex(registry, "/slow", names.map((name) => ({ name, zip: skillZip(name) })));
-    for (const [path, route] of registry.routes) if (path.startsWith("/slow/d/")) route.delayMs = 300;
+    let arrived = 0;
+    let allArrived!: () => void;
+    const together = new Promise<void>((resolve) => (allArrived = resolve));
+    const waitForAll = () => {
+      arrived += 1;
+      if (arrived === names.length) allArrived();
+      return together;
+    };
+    for (const [path, route] of registry.routes) if (path.startsWith("/slow/d/")) route.waitFor = waitForAll;
     const ui = fakeUi();
-    const started = Date.now();
     expect(await runAdd(`${registry.origin}/slow`, options({ yes: true }), box.context(ui.ui))).toBe(0);
-    expect(Date.now() - started).toBeLessThan(800);
     expect(ui.text()).toContain("✓ ./.agents/skills/slow-one\n  universal: Amp, Antigravity, Antigravity CLI, Cline, Codex +8 more\n✓ ./.agents/skills/slow-two");
     expect(readdirSync(join(box.cwd, ".agents/skills")).sort()).toEqual(["slow-one", "slow-three", "slow-two"]);
   });
@@ -232,14 +248,12 @@ describe("runAdd", () => {
       { name: "broken-skill", zip: skillZip("broken-skill") },
     ]);
     for (const [path, route] of registry.routes) {
-      if (path.startsWith("/stuck/d/stuck-skill/")) route.trickle = { pieces: 2, everyMs: 5000 };
+      if (path.startsWith("/stuck/d/stuck-skill/")) route.waitFor = () => new Promise(() => {});
       if (path.startsWith("/stuck/d/broken-skill/")) route.body = skillZip("broken-skill", { "evil.md": "x" });
     }
-    const started = Date.now();
     await expect(runAdd(`${registry.origin}/stuck`, options({ yes: true }), box.context(fakeUi().ui))).rejects.toThrow(
       "broken-skill does not match its sha256 digest",
     );
-    expect(Date.now() - started).toBeLessThan(2000);
     expect(readdirSync(box.cwd)).toEqual([]);
   });
 
@@ -254,13 +268,27 @@ describe("runAdd", () => {
   it("stops the downloads when the caller's signal aborts", async () => {
     const box = sandbox();
     publishIndex(registry, "/cancel", [{ name: "slow-skill", zip: skillZip("slow-skill") }]);
-    for (const [path, route] of registry.routes) if (path.startsWith("/cancel/d/")) route.trickle = { pieces: 2, everyMs: 5000 };
     const controller = new AbortController();
+    for (const [path, route] of registry.routes) {
+      if (path.startsWith("/cancel/d/")) route.waitFor = () => (controller.abort(), new Promise(() => {}));
+    }
     const context = { ...box.context(fakeUi().ui), fetch: { signal: controller.signal } };
-    setTimeout(() => controller.abort(), 300);
-    const started = Date.now();
-    await expect(runAdd(`${registry.origin}/cancel`, options({ yes: true }), context)).rejects.toThrow(/Downloading slow-skill failed/);
-    expect(Date.now() - started).toBeLessThan(2000);
+    await expect(runAdd(`${registry.origin}/cancel`, options({ yes: true }), context)).rejects.toThrow(/aborted/);
+    expect(readdirSync(box.cwd)).toEqual([]);
+  });
+
+  it("installs nothing when the caller's signal aborts before the downloads start", async () => {
+    const box = sandbox();
+    const controller = new AbortController();
+    const ui = fakeUi();
+    const note = ui.ui.note;
+    ui.ui.note = (body, title) => {
+      note(body, title);
+      if (title === "Installation Summary") controller.abort();
+    };
+    const context = { ...box.context(ui.ui), fetch: { signal: controller.signal } };
+    await expect(runAdd(url, options({ yes: true }), context)).rejects.toThrow(/aborted/);
+    expect(ui.text()).not.toContain("Done!");
     expect(readdirSync(box.cwd)).toEqual([]);
   });
 
@@ -338,6 +366,19 @@ describe("runAdd", () => {
     expect(lstatSync(join(outside, "demo-skill")).isSymbolicLink()).toBe(true);
   });
 
+  it("gives Eve its own copy and says so", async () => {
+    const box = sandbox();
+    const ui = fakeUi();
+    expect(await runAdd(url, options({ skills: ["demo-skill"], agents: ["claude-code", "eve"], yes: true }), box.context(ui.ui))).toBe(0);
+    expect(ui.text()).toContain("./.agents/skills/demo-skill\n  symlink → Claude Code\n  copy → Eve");
+    expect(ui.text()).toContain("✓ ./.agents/skills/demo-skill\n  symlinked: Claude Code\n  copied: Eve");
+    expect(ui.text()).not.toContain("Symlinks failed");
+    expect(lstatSync(join(box.cwd, "agent/skills/demo-skill")).isDirectory()).toBe(true);
+    const again = fakeUi();
+    expect(await runAdd(url, options({ skills: ["demo-skill"], agents: ["claude-code", "eve"], yes: true }), box.context(again.ui))).toBe(0);
+    expect(again.text()).toContain("overwrites: ./.agents/skills/demo-skill, ./agent/skills/demo-skill\n");
+  });
+
   it("copies with --copy and says where", async () => {
     const box = sandbox();
     const ui = fakeUi();
@@ -365,5 +406,18 @@ describe("runAdd", () => {
     expect(await runAdd(url, options({ skills: ["demo-skill"], agents: ["claude-code"], yes: true }), box.context(ui.ui))).toBe(1);
     expect(ui.text()).toContain("error: Failed to install 1");
     expect(ui.text()).toContain("✗ demo-skill → Claude Code:");
+  });
+});
+
+describe("shortPath", () => {
+  it.each([
+    ["/u/x/.agents/skills/demo", "/u/x", "/w", "~/.agents/skills/demo"],
+    ["/u/x/.agents/skills/demo", "/u/x/", "/w", "~/.agents/skills/demo"],
+    ["/u/x", "/u/x/", "/w", "~"],
+    ["/w/.agents/skills/demo", "/u/x", "/w/", "./.agents/skills/demo"],
+    ["/u/xy/demo", "/u/x", "/w", "/u/xy/demo"],
+    ["/srv/demo", "/", "/w", "~/srv/demo"],
+  ])("shortens %s with home %s and cwd %s", (path, home, cwd, short) => {
+    expect(shortPath(path, home, cwd)).toBe(short);
   });
 });

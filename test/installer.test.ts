@@ -97,6 +97,53 @@ describe("installSkill", () => {
     expect(result.agents[0].status).toBe("copied");
   });
 
+  it("gives Eve its own copy with only the frontmatter Eve reads, as npx skills does", async () => {
+    const { cwd, pick, options } = setup();
+    const skillMd = "---\nname: demo-skill\ndescription: Demo.\nlicense: MIT\nallowed-tools: Bash\nmetadata:\n  author: me\n  version: 2\n---\n\n# Demo\n";
+    const result = await installSkill("demo-skill", new Map([...files, ["SKILL.md", encode(skillMd)]]), pick("eve", "claude-code"), options);
+    expect(lstatSync(join(cwd, "agent/skills/demo-skill")).isDirectory()).toBe(true);
+    expect(readFileSync(join(cwd, "agent/skills/demo-skill/SKILL.md"), "utf8")).toBe(
+      '---\ndescription: "Demo."\nlicense: "MIT"\nmetadata: {"author":"me"}\n---\n# Demo\n',
+    );
+    expect(readFileSync(join(cwd, "agent/skills/demo-skill/references/api.md"), "utf8")).toBe("api");
+    expect(readFileSync(join(cwd, ".agents/skills/demo-skill/SKILL.md"), "utf8")).toBe(skillMd);
+    expect(result.agents.map((agent) => [agent.agent.id, agent.status])).toEqual([
+      ["eve", "copied"],
+      ["claude-code", "symlinked"],
+    ]);
+  });
+
+  it("trims Eve's frontmatter with copy too, and fails only Eve when it is not YAML", async () => {
+    const { cwd, pick, options } = setup({ copy: true });
+    const folded = "---\nname: demo-skill\ndescription: >-\n  Folded\n  text.\n---\nBody\n";
+    await installSkill("demo-skill", new Map([["SKILL.md", encode(folded)]]), pick("eve"), options);
+    expect(readFileSync(join(cwd, "agent/skills/demo-skill/SKILL.md"), "utf8")).toBe('---\ndescription: "Folded text."\n---\nBody\n');
+    const broken = new Map([["SKILL.md", encode("---\nname: demo-skill\ndescription: [oops\n---\nBody\n")]]);
+    const result = await installSkill("demo-skill", broken, pick("eve", "claude-code"), options);
+    expect(result.agents[0]).toMatchObject({ status: "failed", error: "SKILL.md has frontmatter that is not valid YAML" });
+    expect(result.agents[1].status).toBe("copied");
+  });
+
+  it("replaces whatever is in Eve's directory without confirmation, as npx skills does", async () => {
+    const { cwd, pick, options } = setup();
+    mkdirSync(join(cwd, "agent/skills/demo-skill"), { recursive: true });
+    writeFileSync(join(cwd, "agent/skills/demo-skill/SKILL.md"), "earlier");
+    expect(await replacedDirs("demo-skill", pick("eve"), options)).toContain(join(cwd, "agent/skills/demo-skill"));
+    const result = await installSkill("demo-skill", files, pick("eve"), options);
+    expect(result.agents[0].status).toBe("copied");
+    expect(readFileSync(join(cwd, "agent/skills/demo-skill/SKILL.md"), "utf8")).toContain("description:");
+  });
+
+  it("leaves the shared copy whole when Eve's directory already is the canonical one", async () => {
+    const { cwd, pick, options } = setup();
+    mkdirSync(join(cwd, ".agents/skills"), { recursive: true });
+    mkdirSync(join(cwd, "agent"));
+    symlinkSync(join(cwd, ".agents/skills"), join(cwd, "agent/skills"));
+    const result = await installSkill("demo-skill", files, pick("eve"), options);
+    expect(readFileSync(join(cwd, ".agents/skills/demo-skill/SKILL.md"), "utf8")).toContain("name: demo-skill");
+    expect(result.agents[0].status).toBe("symlinked");
+  });
+
   it("reports an agent that cannot install globally", async () => {
     const { pick, options } = setup({ global: true });
     const result = await installSkill("demo-skill", files, pick("eve"), options);
@@ -214,5 +261,10 @@ describe("outsideDirs", () => {
       [join(cwd, ".claude/skills/demo-skill"), join(outside, "demo-skill")],
     ]);
     expect(await outsideDirs("demo-skill", pick("claude-code"), { ...options, global: true })).toEqual([]);
+  });
+
+  it("keeps a project at the filesystem root inside itself", async () => {
+    const { pick, options } = setup();
+    expect(await outsideDirs("demo-skill", pick("claude-code", "cursor"), { ...options, cwd: "/" })).toEqual([]);
   });
 });

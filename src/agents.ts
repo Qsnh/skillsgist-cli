@@ -27,6 +27,8 @@ interface AgentDef {
   hiddenInPrompt?: boolean;
   unlisted?: boolean;
   pickable?: boolean;
+  projectOwned?: boolean;
+  ownCopy?: boolean;
 }
 
 export interface Agent {
@@ -38,6 +40,8 @@ export interface Agent {
   universal: boolean;
   hidden: boolean;
   pickable: boolean;
+  projectOwned: boolean;
+  ownCopy: boolean;
   installed: boolean;
 }
 
@@ -51,6 +55,7 @@ export interface AgentEnvironment {
 export interface RunningAgent {
   inAgent: boolean;
   id: string | null;
+  name: string | null;
 }
 
 function hasDependency(packageJsonPath: string, name: string): boolean {
@@ -77,12 +82,12 @@ const AGENTS: AgentDef[] = [
   { id: "amp", displayName: "Amp", skillsDir: ".agents/skills", globalDir: (p) => join(p.config, "agents/skills"), detect: (p, exists) => exists(join(p.config, "amp")) },
   { id: "antigravity", displayName: "Antigravity", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/antigravity/skills"), detect: (p, exists) => exists(join(p.home, ".gemini/antigravity")) },
   { id: "antigravity-cli", displayName: "Antigravity CLI", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/antigravity-cli/skills"), detect: (p, exists) => exists(join(p.home, ".gemini/antigravity-cli")) },
-  { id: "astrbot", displayName: "AstrBot", skillsDir: "data/skills", globalDir: (p) => join(p.home, ".astrbot/data/skills"), detect: (p, exists) => exists(join(p.cwd, "data/skills")) || exists(join(p.home, ".astrbot")) },
+  { id: "astrbot", displayName: "AstrBot", skillsDir: "data/skills", globalDir: (p) => join(p.home, ".astrbot/data/skills"), detect: (p, exists) => exists(join(p.cwd, "data/skills")) || exists(join(p.home, ".astrbot")), projectOwned: true },
   { id: "autohand-code", displayName: "Autohand Code CLI", skillsDir: ".autohand/skills", globalDir: (p) => join(p.autohand, "skills"), detect: (p, exists) => exists(p.autohand) },
   { id: "augment", displayName: "Augment", skillsDir: ".augment/skills", globalDir: (p) => join(p.home, ".augment/skills"), detect: (p, exists) => exists(join(p.home, ".augment")) },
   { id: "bob", displayName: "IBM Bob", skillsDir: ".bob/skills", globalDir: (p) => join(p.home, ".bob/skills"), detect: (p, exists) => exists(join(p.home, ".bob")) },
   { id: "claude-code", displayName: "Claude Code", skillsDir: ".claude/skills", globalDir: (p) => join(p.claude, "skills"), detect: (p, exists) => exists(p.claude) },
-  { id: "openclaw", displayName: "OpenClaw", skillsDir: "skills", globalDir: (p, exists) => openClawGlobalDir(p, exists), detect: (p, exists) => exists(join(p.home, ".openclaw")) || exists(join(p.home, ".clawdbot")) || exists(join(p.home, ".moltbot")) },
+  { id: "openclaw", displayName: "OpenClaw", skillsDir: "skills", globalDir: (p, exists) => openClawGlobalDir(p, exists), detect: (p, exists) => exists(join(p.home, ".openclaw")) || exists(join(p.home, ".clawdbot")) || exists(join(p.home, ".moltbot")), projectOwned: true },
   { id: "cline", displayName: "Cline", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".agents/skills"), detect: (p, exists) => exists(join(p.home, ".cline")) },
   { id: "codearts-agent", displayName: "CodeArts Agent", skillsDir: ".codeartsdoer/skills", globalDir: (p) => join(p.home, ".codeartsdoer/skills"), detect: (p, exists) => exists(join(p.home, ".codeartsdoer")) },
   { id: "codebuddy", displayName: "CodeBuddy", skillsDir: ".codebuddy/skills", globalDir: (p) => join(p.home, ".codebuddy/skills"), detect: (p, exists) => exists(join(p.cwd, ".codebuddy")) || exists(join(p.home, ".codebuddy")) },
@@ -98,7 +103,7 @@ const AGENTS: AgentDef[] = [
   { id: "devin", displayName: "Devin for Terminal", skillsDir: ".devin/skills", globalDir: (p) => join(p.config, "devin/skills"), detect: (p, exists) => exists(join(p.config, "devin")) },
   { id: "dexto", displayName: "Dexto", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".agents/skills"), detect: (p, exists) => exists(join(p.home, ".dexto")), hiddenInPrompt: true },
   { id: "droid", displayName: "Droid", skillsDir: ".factory/skills", globalDir: (p) => join(p.home, ".factory/skills"), detect: (p, exists) => exists(join(p.home, ".factory")) },
-  { id: "eve", displayName: "Eve", skillsDir: "agent/skills", globalDir: () => null, detect: (p, exists) => exists(join(p.cwd, "agent")) && hasDependency(join(p.cwd, "package.json"), "eve"), pickable: false },
+  { id: "eve", displayName: "Eve", skillsDir: "agent/skills", globalDir: () => null, detect: (p, exists) => exists(join(p.cwd, "agent")) && hasDependency(join(p.cwd, "package.json"), "eve"), pickable: false, ownCopy: true },
   { id: "firebender", displayName: "Firebender", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".firebender/skills"), detect: (p, exists) => exists(join(p.home, ".firebender")), hiddenInPrompt: true },
   { id: "forgecode", displayName: "ForgeCode", skillsDir: ".forge/skills", globalDir: (p) => join(p.home, ".forge/skills"), detect: (p, exists) => exists(join(p.home, ".forge")) },
   { id: "gemini-cli", displayName: "Gemini CLI", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/skills"), detect: (p, exists) => exists(join(p.home, ".gemini")) },
@@ -164,6 +169,8 @@ const RUNNING_AGENT_IDS = new Map<string, string>([
   ["github-copilot-cli", "github-copilot"],
 ]);
 
+const RUNNING_AGENT_NAMES = new Map<string, string>([["devin", "Devin"]]);
+
 export function agentPaths(home: string, cwd: string, env: NodeJS.ProcessEnv): AgentPaths {
   const dir = (value: string | undefined, fallback: string) => value?.trim() || fallback;
   return {
@@ -194,6 +201,8 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
       universal: canonical && def.unlisted !== true,
       hidden: def.hiddenInPrompt === true,
       pickable: def.pickable !== false,
+      projectOwned: def.projectOwned === true,
+      ownCopy: def.ownCopy === true,
       installed: def.detect(paths, exists),
     };
   });
@@ -222,15 +231,15 @@ function signalledAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | nu
   return null;
 }
 
+function runningAgent(name: string, id: string | null): RunningAgent {
+  return { inAgent: true, id, name: RUNNING_AGENT_NAMES.get(name) ?? AGENTS.find((agent) => agent.id === id)?.displayName ?? null };
+}
+
 export function detectRunningAgent(env: NodeJS.ProcessEnv, exists: Exists = existsSync): RunningAgent {
   const declared = declaredAgentName(env);
   const declaredId = declared === null ? null : runningAgentId(declared);
-  if (declaredId !== null) return { inAgent: true, id: declaredId };
+  if (declared !== null && declaredId !== null) return runningAgent(declared, declaredId);
   const name = signalledAgentName(env, exists);
-  if (name !== null) return { inAgent: true, id: runningAgentId(name) };
-  return { inAgent: declared !== null, id: null };
-}
-
-export function agentDisplayName(id: string | null): string | null {
-  return AGENTS.find((agent) => agent.id === id)?.displayName ?? null;
+  if (name !== null) return runningAgent(name, runningAgentId(name));
+  return { inAgent: declared !== null, id: null, name: null };
 }

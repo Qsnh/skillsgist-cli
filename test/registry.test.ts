@@ -86,6 +86,12 @@ describe("fetchIndex", () => {
     expect(await failure(fetchIndex(keyed(), { timeoutMs: 100 }))).toMatch(/timed out/);
   });
 
+  it("gives the body its own idle window once the headers arrive", async () => {
+    publishIndex(registry, `/i/${KEY}`, [{ name: "demo-skill", zip: skillZip("demo-skill") }]);
+    Object.assign(registry.routes.get(indexPath)!, { delayMs: 300, bodyDelayMs: 250 });
+    expect((await fetchIndex(keyed(), { timeoutMs: 400 }))?.skills).toHaveLength(1);
+  });
+
   it("waits as long as the index keeps arriving", async () => {
     publishIndex(registry, `/i/${KEY}`, [{ name: "demo-skill", zip: skillZip("demo-skill") }]);
     registry.routes.get(indexPath)!.trickle = { pieces: 6, everyMs: 50 };
@@ -109,9 +115,9 @@ describe("fetchIndex", () => {
   });
 
   it.each<[string, Partial<Route>]>([
-    ["with a Content-Length header", {}],
-    ["streamed", { trickle: { pieces: 2, everyMs: 0 } }],
-  ])("rejects an index larger than the cap, %s", async (_, route) => {
+    ["by its Content-Length header, before reading it", { body: "{}", headers: { "content-length": String(MAX_INDEX_BYTES + 1) }, hangUpAfterBytes: 2 }],
+    ["while streaming it", { trickle: { pieces: 2, everyMs: 0 } }],
+  ])("rejects an index larger than the cap %s", async (_, route) => {
     registry.routes.set(indexPath, { type: "application/json", body: new Uint8Array(MAX_INDEX_BYTES + 1).fill(32), ...route });
     expect(await failure(fetchIndex(keyed()))).toMatch(/index\.json is larger than/);
   });
@@ -147,6 +153,7 @@ describe("parseIndex", () => {
     [{ ...good, type: "skill-md" }, "unsupported type"],
     [{ ...good, digest: "sha256:xyz" }, "invalid digest"],
     [{ ...good, url: "https://evil.example/x.zip" }, "url points to another origin"],
+    [{ ...good, url: "https://admin:hunter2@h.example/x.zip" }, "url has a username or password in it"],
   ])("skips the entry %j", (entry, reason) => {
     const index = parseIndex({ $schema: DISCOVERY_SCHEMA, skills: [entry, { ...good, name: "kept-skill" }] }, indexUrl, "https://h.example");
     expect(index.skills.map((skill) => skill.name)).toEqual(["kept-skill"]);
@@ -200,12 +207,10 @@ describe("downloadArtifact", () => {
   it("stops a download when its signal aborts", async () => {
     publishIndex(registry, `/i/${KEY}`, [{ name: "demo-skill", zip: skillZip("demo-skill") }]);
     const index = await fetchIndex(keyed());
-    registry.routes.get(new URL(index!.skills[0].url).pathname)!.trickle = { pieces: 2, everyMs: 1000 };
+    registry.routes.get(new URL(index!.skills[0].url).pathname)!.trickle = { pieces: 2, everyMs: 60_000 };
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 50);
-    const started = Date.now();
-    expect(await failure(downloadArtifact(index!.skills[0], { signal: controller.signal }))).toMatch(/^Downloading demo-skill failed/);
-    expect(Date.now() - started).toBeLessThan(900);
+    expect(await failure(downloadArtifact(index!.skills[0], { signal: controller.signal }))).toMatch(/aborted/);
   });
 
   it("fails when the bytes do not match the digest", async () => {
@@ -243,11 +248,11 @@ describe("downloadArtifact", () => {
   });
 
   it("rejects an artifact whose Content-Length is over the cap before reading it", async () => {
-    const oversized = new Uint8Array(MAX_ARTIFACT_BYTES + 1);
     registry.routes.set(`/i/${KEY}/d/demo-skill/large.zip`, {
-      body: oversized,
+      body: "PK",
       type: "application/zip",
       headers: { "content-length": String(MAX_ARTIFACT_BYTES + 1) },
+      hangUpAfterBytes: 2,
     });
     const message = await failure(
       downloadArtifact({

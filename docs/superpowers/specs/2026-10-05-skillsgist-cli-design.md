@@ -38,13 +38,13 @@ Accepted limits, documented in the README and not handled by the CLI:
 
 ```
 package.json      name: skillsgist, type: module, bin: { skillsgist: dist/cli.js }
-                  dependencies (exact versions): @clack/prompts, fflate
+                  dependencies (exact versions): @clack/prompts, fflate, yaml
                   engines: node >= 20.12 (the floor @clack/prompts sets)
 src/
   cli.ts          argv parsing, `add` dispatch (aliases a, install, i), --help, --version
   source.ts       input URL validation and normalization, key extraction, redact()
   registry.ts     index fetch and validation, artifact download, sha256 check
-  archive.ts      in-memory zip extraction with path and size checks, SKILL.md check
+  archive.ts      in-memory zip extraction with path and size checks, SKILL.md check, Eve's SKILL.md
   agents.ts       agent table, installed-agent detection, running-agent detection
   installer.ts    canonical directory write, symlink or copy into agent directories
   add.ts          the add flow: selection, confirmation, install, output
@@ -147,18 +147,21 @@ Artifacts are downloaded up to 4 at a time. The first failure aborts the other d
 - **Agent directory:**
   - Universal agents use the canonical directory.
   - Other agents use `<cwd>/<projectDir>/<name>` (project) or `<globalDir>/<name>` (global).
+- **Eve:** as in `npx skills` 1.5.18, Eve never gets a link. In both modes it gets its own copy in `agent/skills/<name>`, whose `SKILL.md` frontmatter is parsed with `yaml` and cut to `description` and `license` (when they are strings) and the string values of `metadata`, each written back as a JSON value; a `SKILL.md` without frontmatter only loses a leading blank line. Frontmatter that is not valid YAML fails Eve's install alone. If `agent/skills/<name>` already resolves to the canonical directory (because `agent/skills` is a link to `.agents/skills`), it is left as it is, so the other agents keep the full `SKILL.md`.
 - **Path safety:** every resolved directory must lie strictly inside its base; otherwise the run fails.
 - **Symlink mode** (default):
   1. Remove the canonical directory if present and write the files there.
-  2. For each non-universal agent, link its directory to the canonical directory with a relative symlink (a junction with an absolute target on Windows).
+  2. For each non-universal agent other than Eve, link its directory to the canonical directory with a relative symlink (a junction with an absolute target on Windows).
      - An existing symlink already pointing at the target is kept; anything else at that path is removed first, subject to Project safety.
      - If creating the link fails, fall back to copying into that agent directory and print a warning.
 - **Copy mode** (`--copy`): for each distinct target directory, remove it if present and write the files, subject to Project safety.
 - **Project safety:** in project scope without a confirmed summary (with `-y`, or inside an agent), a target fails instead of being written when:
   - its real location, after resolving symlinks in its parent directories, is outside the project; or
-  - it belongs to an agent whose project directory is not under a dot-folder (OpenClaw's `skills/`, AstrBot's `data/skills/`, Eve's `agent/skills/`), and something other than a symlink is already there, since such a folder may hold the project's own skills.
+  - it belongs to an agent whose project directory may hold the project's own skills (marked `projectOwned` in the agent table: OpenClaw's `skills/`, AstrBot's `data/skills/`), and something other than a symlink is already there.
 
   A link left by an earlier install is replaced as usual. The failure says why, and the summary leaves these directories out of `overwrites`.
+
+  Eve's `agent/skills/` also holds the project's own skills, but it is not marked: Eve always gets a fresh copy, as with `npx skills`, so `-y` replaces Eve's earlier copy, or a project skill of the same name, and the summary lists it under `overwrites`.
 - **Partial failure:** all downloads have passed by the time writing starts. If writing fails for some skill and agent, the remaining writes continue. The result lists the successes and the failures, and the exit code is 1. There is no rollback.
 
 ## Output
@@ -174,6 +177,8 @@ Built with `@clack/prompts` so it looks like `npx skills`. Paths are shortened b
 ```
 
 In copy mode: `✓ demo-skill (copied)` followed by one `→ <path>` line per target directory.
+
+In symlink mode, Eve's own copy shows as `copy → Eve` in the summary and `copied: Eve` in the result, without the warning printed when a symlink falls back to a copy.
 
 Errors, and the usage printed with them, go to stderr; everything else goes to stdout. The skillsgist agent prompt tells the agent to open the `SKILL.md` in the directory this output reports, so the `✓ <canonical path>` line must keep this shape.
 
@@ -235,7 +240,7 @@ Checked in this order, as in `@vercel/detect-agent`, which 1.5.18 bundles:
 | `CLAUDECODE`, `CLAUDE_CODE` | claude-code |
 | `REPL_ID` | replit |
 | `COPILOT_MODEL`, `COPILOT_ALLOW_ALL`, `COPILOT_GITHUB_TOKEN` | github-copilot |
-| file `/opt/.devin` | universal agents only |
+| file `/opt/.devin` | universal agents only (the CLI still says `Devin detected`) |
 
 Notes:
 
@@ -253,7 +258,7 @@ All with vitest, written test-first.
 - **registry:** the index candidate order and the 404 fallthrough; schema rejection; each entry rule, including cross-origin URLs; digest match and mismatch; `redirect: "error"`.
 - **archive:** zips built in the test with `fflate`. Path traversal, absolute paths, backslashes, drive letters, the file-count and size limits, and a missing or invalid `SKILL.md`.
 - **agents:** detection against a fake home directory and environment; the environment overrides; running-agent detection order.
-- **installer:** in temporary directories. Symlink and copy modes, overwrite of an existing directory, keeping a correct existing symlink, the copy fallback when symlinking fails, and the path safety check.
+- **installer:** in temporary directories. Symlink and copy modes, overwrite of an existing directory, keeping a correct existing symlink, the copy fallback when symlinking fails, Eve's own copy and its trimmed `SKILL.md`, and the path safety check, including a project at the filesystem root.
 - **add:** with a scripted prompts implementation, every branch of the skill, agent, scope and confirm steps, cancellation, and the non-TTY error.
 
 ### End-to-end tests

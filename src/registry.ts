@@ -67,7 +67,9 @@ async function request(url: string, options: FetchOptions): Promise<Reply> {
   const dog = watchdog(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const signal = options.signal ? AbortSignal.any([dog.signal, options.signal]) : dog.signal;
   try {
-    return { res: await fetch(url, { redirect: "error", signal }), watchdog: dog };
+    const res = await fetch(url, { redirect: "error", signal });
+    dog.reset();
+    return { res, watchdog: dog };
   } catch (err) {
     dog.stop();
     throw new CliError(`Could not reach ${redact(url)}: ${redact(reason(err))}`);
@@ -145,6 +147,7 @@ function entryProblem(entry: Record<string, unknown>, indexUrl: string, origin: 
   } catch {
     return "invalid url";
   }
+  if (url.username !== "" || url.password !== "") return "url has a username or password in it";
   if (url.origin !== origin) return "url points to another origin";
   return null;
 }

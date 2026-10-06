@@ -1,15 +1,17 @@
-import { sep } from "node:path";
-import { agentDisplayName, detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
+import { resolve, sep } from "node:path";
+import { detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
 import { unpackSkill, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
 import {
   canonicalSkillDir,
   installSkill,
+  locator,
   outsideDirs,
   replacedDirs,
   type AgentResult,
   type InstallOptions,
   type InstalledAgent,
+  type Locator,
   type SkillResult,
 } from "./installer.js";
 import { downloadArtifact, fetchIndex, type FetchOptions, type SkillEntry } from "./registry.js";
@@ -84,10 +86,15 @@ function formatList(items: string[], max = 5): string {
   return items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
 }
 
+function under(path: string, base: string, mark: string): string | null {
+  const root = resolve(base);
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  if (path === root) return mark;
+  return path.startsWith(prefix) ? `${mark}${sep}${path.slice(prefix.length)}` : null;
+}
+
 export function shortPath(path: string, home: string, cwd: string): string {
-  if (path === home || path.startsWith(home + sep)) return `~${path.slice(home.length)}`;
-  if (path === cwd || path.startsWith(cwd + sep)) return `.${path.slice(cwd.length)}`;
-  return path;
+  return under(path, home, "~") ?? under(path, cwd, ".") ?? path;
 }
 
 function cancelled(ui: Ui): number {
@@ -163,27 +170,34 @@ function forScope(selection: Selection, global: boolean, options: AddOptions, ui
   return supported;
 }
 
-async function summary(skills: SkillEntry[], targets: Agent[], install: InstallOptions): Promise<string> {
+async function summary(skills: SkillEntry[], targets: Agent[], install: InstallOptions, where: Locator): Promise<string> {
   const short = (path: string) => shortPath(path, install.home, install.cwd);
-  const everyone = formatList(targets.map((agent) => agent.displayName));
+  const names = (agents: Agent[]) => formatList(agents.map((agent) => agent.displayName));
+  const everyone = names(targets);
   const shared = formatList(sharedNames(targets));
-  const linked = formatList(targets.filter((agent) => !agent.canonical).map((agent) => agent.displayName));
-  const blocks: string[] = [];
-  for (const skill of skills) {
-    const lines: string[] = [];
-    if (install.copy) {
-      lines.push(`${skill.name} (copy)`);
-      lines.push(`  copy → ${everyone}`);
-    } else {
-      lines.push(short(canonicalSkillDir(skill.name, install)));
-      if (shared !== "") lines.push(`  universal: ${shared}`);
-      if (linked !== "") lines.push(`  symlink → ${linked}`);
-    }
-    const replaced = await replacedDirs(skill.name, targets, install);
-    if (replaced.length > 0) lines.push(`  overwrites: ${formatList(replaced.map(short))}`);
-    for (const [dir, real] of await outsideDirs(skill.name, targets, install)) lines.push(`  outside the project: ${short(dir)} → ${short(real)}`);
-    blocks.push(lines.join("\n"));
-  }
+  const linked = names(targets.filter((agent) => !agent.canonical && !agent.ownCopy));
+  const copied = names(targets.filter((agent) => agent.ownCopy));
+  const blocks = await Promise.all(
+    skills.map(async (skill) => {
+      const lines: string[] = [];
+      if (install.copy) {
+        lines.push(`${skill.name} (copy)`);
+        lines.push(`  copy → ${everyone}`);
+      } else {
+        lines.push(short(canonicalSkillDir(skill.name, install)));
+        if (shared !== "") lines.push(`  universal: ${shared}`);
+        if (linked !== "") lines.push(`  symlink → ${linked}`);
+        if (copied !== "") lines.push(`  copy → ${copied}`);
+      }
+      const [replaced, outside] = await Promise.all([
+        replacedDirs(skill.name, targets, install, where),
+        outsideDirs(skill.name, targets, install, where),
+      ]);
+      if (replaced.length > 0) lines.push(`  overwrites: ${formatList(replaced.map(short))}`);
+      for (const [dir, real] of outside) lines.push(`  outside the project: ${short(dir)} → ${short(real)}`);
+      return lines.join("\n");
+    }),
+  );
   return blocks.join("\n\n");
 }
 
@@ -193,7 +207,8 @@ async function downloadAll(skills: SkillEntry[], options: FetchOptions = {}): Pr
   const payloads: Payload[] = [];
   let next = 0;
   const worker = async () => {
-    while (next < skills.length && !signal.aborted) {
+    while (next < skills.length) {
+      signal.throwIfAborted();
       const position = next;
       next += 1;
       const skill = skills[position];
@@ -234,12 +249,12 @@ function report(results: SkillResult[], install: InstallOptions, ui: Ui): void {
     lines.push(`✓ ${shortPath(result.canonicalPath, install.home, install.cwd)}`);
     const shared = sharedNames(done.filter((agent) => agent.status === "canonical").map((agent) => agent.agent));
     const linked = done.filter((agent) => agent.status === "symlinked").map((agent) => agent.agent.displayName);
-    const copied = done.filter((agent) => agent.status === "copied").map((agent) => agent.agent.displayName);
+    const copied = done.filter((agent) => agent.status === "copied").map((agent) => agent.agent);
     if (shared.length > 0) lines.push(`  universal: ${formatList(shared)}`);
     if (linked.length > 0) lines.push(`  symlinked: ${formatList(linked)}`);
     if (copied.length > 0) {
-      lines.push(`  copied: ${formatList(copied)}`);
-      fallbacks.push(...copied);
+      lines.push(`  copied: ${formatList(copied.map((agent) => agent.displayName))}`);
+      fallbacks.push(...copied.filter((agent) => !agent.ownCopy).map((agent) => agent.displayName));
     }
   }
   if (installed > 0) ui.note(lines.join("\n"), `Installed ${plural(installed, "skill")}`);
@@ -256,7 +271,7 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
     throw new CliError("There is no terminal to ask questions in. Add -y to install without prompts.");
   }
   if (running.inAgent) {
-    ui.info(`${agentDisplayName(running.id) ?? "An agent"} detected — installing non-interactively`);
+    ui.info(`${running.name ?? "An agent"} detected — installing non-interactively`);
   } else {
     ui.intro("skillsgist");
   }
@@ -282,8 +297,9 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
   if (global === CANCELLED) return cancelled(ui);
   const targets = forScope(chosen, global, options, ui);
   const install: InstallOptions = { global, copy: options.copy, confirmed: !yes, home: context.home, cwd: context.cwd };
+  const where = locator();
 
-  ui.note(await summary(skills, targets, install), "Installation Summary");
+  ui.note(await summary(skills, targets, install, where), "Installation Summary");
   if (!yes) {
     const proceed = await ui.confirm("Proceed with installation?");
     if (proceed === CANCELLED || !proceed) return cancelled(ui);
@@ -292,7 +308,7 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
   const payloads = await downloadAll(skills, context.fetch);
 
   const results: SkillResult[] = [];
-  for (const payload of payloads) results.push(await installSkill(payload.name, payload.files, targets, install));
+  for (const payload of payloads) results.push(await installSkill(payload.name, payload.files, targets, install, where));
   report(results, install, ui);
   ui.outro("Done!  Review skills before use; they run with full agent permissions.");
   return results.some((result) => result.agents.some((agent) => agent.status === "failed")) ? 1 : 0;

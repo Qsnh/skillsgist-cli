@@ -33,6 +33,14 @@ describe("loadAgents", () => {
     expect(load().filter((agent) => !agent.pickable).map((agent) => agent.id)).toEqual(["eve"]);
   });
 
+  it("marks the agents whose project folder -y never replaces", () => {
+    expect(load().filter((agent) => agent.projectOwned).map((agent) => agent.id)).toEqual(["astrbot", "openclaw"]);
+  });
+
+  it("gives only Eve its own copy instead of a link", () => {
+    expect(load().filter((agent) => agent.ownCopy).map((agent) => agent.id)).toEqual(["eve"]);
+  });
+
   it("resolves global directories from the home directory", () => {
     const agents = load();
     expect(byId(agents, "claude-code").globalDir).toBe("/h/.claude/skills");
@@ -96,11 +104,20 @@ describe("detectRunningAgent", () => {
     [{ AI_AGENT: "toString" }, null],
     [{ AI_AGENT: "constructor", CLAUDECODE: "1" }, "claude-code"],
   ])("maps %j to %s", (env, id) => {
-    expect(detectRunningAgent(env, none)).toEqual({ inAgent: true, id });
+    expect(detectRunningAgent(env, none)).toMatchObject({ inAgent: true, id });
+  });
+
+  it.each<[NodeJS.ProcessEnv, string | null]>([
+    [{ CLAUDECODE: "1" }, "Claude Code"],
+    [{ AI_AGENT: "cursor-cli" }, "Cursor"],
+    [{ AI_AGENT: "devin" }, "Devin"],
+    [{ AI_AGENT: "v0" }, null],
+  ])("names the agent behind %j %s", (env, name) => {
+    expect(detectRunningAgent(env, none).name).toBe(name);
   });
 
   it("treats a bare Cursor terminal as no agent", () => {
-    expect(detectRunningAgent({ CURSOR_TRACE_ID: "t" }, none)).toEqual({ inAgent: false, id: null });
+    expect(detectRunningAgent({ CURSOR_TRACE_ID: "t" }, none)).toEqual({ inAgent: false, id: null, name: null });
   });
 
   it.each<[NodeJS.ProcessEnv, string]>([
@@ -108,14 +125,14 @@ describe("detectRunningAgent", () => {
     [{ CURSOR_TRACE_ID: "t", CODEX_THREAD_ID: "x" }, "codex"],
     [{ CURSOR_TRACE_ID: "t", GEMINI_CLI: "1" }, "gemini-cli"],
   ])("finds the agent running in a Cursor terminal from %j", (env, id) => {
-    expect(detectRunningAgent(env, none)).toEqual({ inAgent: true, id });
+    expect(detectRunningAgent(env, none)).toMatchObject({ inAgent: true, id });
   });
 
-  it("maps Devin's marker file to the universal directory", () => {
-    expect(detectRunningAgent({}, only("/opt/.devin"))).toEqual({ inAgent: true, id: "universal" });
+  it("maps Devin's marker file to the universal directory and still calls it Devin", () => {
+    expect(detectRunningAgent({}, only("/opt/.devin"))).toEqual({ inAgent: true, id: "universal", name: "Devin" });
   });
 
   it("reports no agent in a plain shell", () => {
-    expect(detectRunningAgent({}, none)).toEqual({ inAgent: false, id: null });
+    expect(detectRunningAgent({}, none)).toEqual({ inAgent: false, id: null, name: null });
   });
 });

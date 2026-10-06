@@ -12,6 +12,8 @@ export interface Route {
   type?: string;
   headers?: Record<string, string>;
   delayMs?: number;
+  bodyDelayMs?: number;
+  waitFor?: () => Promise<unknown>;
   trickle?: { pieces: number; everyMs: number };
   hangUpAfterBytes?: number;
 }
@@ -42,6 +44,14 @@ export async function startRegistry(): Promise<TestRegistry> {
         return;
       }
       res.writeHead(route.status ?? 200, { "content-type": route.type ?? "application/octet-stream", ...route.headers });
+      if (route.bodyDelayMs) {
+        res.flushHeaders();
+        setTimeout(() => sendBody(route), route.bodyDelayMs);
+      } else {
+        sendBody(route);
+      }
+    };
+    const sendBody = (route: Route) => {
       const body = Buffer.from(route.body);
       if (route.hangUpAfterBytes !== undefined) {
         res.write(body.subarray(0, route.hangUpAfterBytes), () => res.destroy());
@@ -62,7 +72,8 @@ export async function startRegistry(): Promise<TestRegistry> {
         res.end(route.body);
       }
     };
-    if (route?.delayMs) setTimeout(send, route.delayMs);
+    if (route?.waitFor) void route.waitFor().then(send);
+    else if (route?.delayMs) setTimeout(send, route.delayMs);
     else send();
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

@@ -2880,7 +2880,7 @@ node serve.tmp.mjs &
 Then, in an empty directory in a real terminal, run:
 
 ```bash
-node /Users/tengyongzhi/work/bot-workspaces/skillsgist-cli/dist/cli.js add http://127.0.0.1:8790/i/0123456789abcdef0123456789abcdef
+node <path to skillsgist-cli>/dist/cli.js add http://127.0.0.1:8790/i/0123456789abcdef0123456789abcdef
 ```
 
 Expected:
@@ -2978,7 +2978,7 @@ git commit -m "feat: ship the skillsgist binary with end-to-end leak checks"
 
 ### Task 8: skillsgist UI, copy and tests
 
-Work in `../skillsgist` (`/Users/tengyongzhi/work/bot-workspaces/skillsgist`).
+Work in `../skillsgist`, the skillsgist checkout next to this repository.
 
 **Files:**
 - Modify: `src/views/skills.tsx` (`skillsAdd` and its two call sites; `HeroLede`)
@@ -2994,7 +2994,7 @@ Work in `../skillsgist` (`/Users/tengyongzhi/work/bot-workspaces/skillsgist`).
 - [ ] **Step 1: Branch**
 
 ```bash
-cd /Users/tengyongzhi/work/bot-workspaces/skillsgist
+cd ../skillsgist
 git checkout -b feat/skillsgist-cli
 ```
 
