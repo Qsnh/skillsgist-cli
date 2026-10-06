@@ -54,8 +54,6 @@ Inside a coding agent (Claude Code, Codex, Cursor and others are detected from t
 npx skillsgist agents
 ```
 
-`agents` takes no options. It lists every agent ID `-a` accepts, with the folder `add` installs that agent's skills into in a project and with `-g`. It ticks the agents detected on this machine or in the current directory, so the ticks can change from one project to the next. Inside an agent, it also says which agents `add` installs for without `-a`. It only reads the local disk.
-
 ## What can still see the key
 
 - **The command line.** Your shell history and the agent's transcript keep the command you ran.
