@@ -1,4 +1,4 @@
-# skillsgist
+# skillsgist-cli
 
 Install Agent Skills from a [skillsgist](https://github.com/Qsnh/skillsgist) registry into Claude Code, Codex, Cursor and dozens of other coding agents, without storing the registry's install key anywhere.
 
