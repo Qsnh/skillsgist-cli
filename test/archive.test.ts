@@ -1,6 +1,6 @@
 import { strToU8, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
-import { hasNameAndDescription, isSafeArchivePath, unpackSkill } from "../src/archive.js";
+import { hasNameAndDescription, isSafeArchivePath, skillName, unpackSkill } from "../src/archive.js";
 import { skillMd } from "./helpers/registry.js";
 
 const zip = (files: Record<string, string>) =>
@@ -114,5 +114,35 @@ describe("hasNameAndDescription", () => {
     "---\nname: x\ndescription: y\n---",
   ])("accepts any YAML that gives both as strings: %j", (skillMd) => {
     expect(hasNameAndDescription(skillMd)).toBe(true);
+  });
+});
+
+describe("skillName", () => {
+  it("returns the name from valid frontmatter", () => {
+    expect(skillName("---\nname: demo-skill\ndescription: Demo.\n---\n")).toBe("demo-skill");
+  });
+
+  it("returns the name with a byte order mark and CRLF line endings", () => {
+    expect(skillName("﻿---\r\nname: demo-skill\r\ndescription: Demo.\r\n---\r\n")).toBe("demo-skill");
+  });
+
+  it("returns null without frontmatter", () => {
+    expect(skillName("# demo-skill\n")).toBeNull();
+  });
+
+  it("returns null with only a name", () => {
+    expect(skillName("---\nname: demo-skill\n---\n")).toBeNull();
+  });
+
+  it("returns null with an empty description", () => {
+    expect(skillName('---\nname: demo-skill\ndescription: ""\n---\n')).toBeNull();
+  });
+
+  it("returns null with a non-string name", () => {
+    expect(skillName("---\nname: 123\ndescription: Demo.\n---\n")).toBeNull();
+  });
+
+  it("returns null for invalid YAML instead of throwing", () => {
+    expect(skillName("---\nname: demo-skill\ndescription: [oops\n---\n")).toBeNull();
   });
 });

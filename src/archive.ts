@@ -35,6 +35,16 @@ export function hasNameAndDescription(skillMd: string): boolean {
   return filled(data.name) && filled(data.description);
 }
 
+export function skillName(skillMd: string): string | null {
+  let data: Record<string, unknown>;
+  try {
+    ({ data } = parseFrontmatter(skillMd.replace(/^\uFEFF/, "")));
+  } catch {
+    return null;
+  }
+  return filled(data.name) && filled(data.description) ? (data.name as string) : null;
+}
+
 export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimits = DEFAULT_LIMITS): SkillFiles {
   const scan = { files: 0, bytes: 0, problem: null as string | null };
   let entries: Record<string, Uint8Array>;
