@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -18,8 +18,40 @@ interface Sandbox {
 interface Result {
   code: number;
   output: string;
+  stdout: string;
   stderr: string;
   connections: string[];
+}
+
+interface TreeEntry {
+  type: "file" | "dir" | "link";
+  size: number;
+  mtimeMs: number;
+  target: string | null;
+}
+
+function treeSnapshot(root: string): Record<string, TreeEntry> {
+  const out: Record<string, TreeEntry> = {};
+  const walk = (dir: string, prefix: string) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      const rel = prefix === "" ? name : `${prefix}/${name}`;
+      const info = lstatSync(path);
+      out[rel] = {
+        type: info.isSymbolicLink() ? "link" : info.isDirectory() ? "dir" : "file",
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+        target: info.isSymbolicLink() ? readlinkSync(path) : null,
+      };
+      if (info.isDirectory()) walk(path, rel);
+    }
+  };
+  if (existsSync(root)) walk(root, "");
+  return out;
+}
+
+function sandboxSnapshot(box: Sandbox): { home: Record<string, TreeEntry>; cwd: Record<string, TreeEntry> } {
+  return { home: treeSnapshot(box.home), cwd: treeSnapshot(box.cwd) };
 }
 
 let registry: TestRegistry;
@@ -61,7 +93,7 @@ function run(box: Sandbox, args: string[], env: Record<string, string> = {}): Pr
       },
       (error, stdout, stderr) => {
         const connections = existsSync(box.log) ? readFileSync(box.log, "utf8").split("\n").filter(Boolean) : [];
-        done({ code: error ? Number(error.code ?? 1) : 0, output: `${stdout}${stderr}`, stderr, connections });
+        done({ code: error ? Number(error.code ?? 1) : 0, output: `${stdout}${stderr}`, stdout, stderr, connections });
       },
     );
   });
@@ -216,5 +248,52 @@ describe("skillsgist agents", () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("Unexpected argument: claude-code");
     expect(result.stderr).toContain("skillsgist agents");
+  });
+});
+
+describe("skillsgist list", () => {
+  it("lists what add just installed, without touching the network or the disk", async () => {
+    const box = sandbox();
+    const added = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-y", "-a", "claude-code"]);
+    expect(added.code).toBe(0);
+    const before = sandboxSnapshot(box);
+    const result = await run(box, ["list"]);
+    expect(result.code).toBe(0);
+    expect(result.output).toMatch(/^demo-skill +\.\/\.agents\/skills\/demo-skill +Claude Code$/m);
+    expect(result.output).toContain("other-skill");
+    expect(result.connections).toEqual(added.connections);
+    expect(result.output).not.toContain("\x1b");
+    expect(result.output).not.toContain(KEY);
+    expect(sandboxSnapshot(box)).toEqual(before);
+  });
+
+  it("prints JSON of project skills on stdout alone", async () => {
+    const box = sandbox();
+    const added = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-y", "-a", "claude-code"]);
+    expect(added.code).toBe(0);
+    const result = await run(box, ["ls", "--json", "-p"]);
+    expect(result.code).toBe(0);
+    const rows = JSON.parse(result.stdout) as Array<{ name: string; scope: string }>;
+    expect(rows.map((row) => row.name).sort()).toEqual(["demo-skill", "other-skill"]);
+    for (const row of rows) expect(row.scope).toBe("project");
+  });
+
+  it("says nothing is installed in an empty sandbox", async () => {
+    const box = sandbox();
+    const result = await run(box, ["list"]);
+    expect(result.code).toBe(0);
+    expect(result.output).toBe("No project skills\n\nNo global skills\n");
+  });
+
+  it("rejects an unexpected argument and an invalid agent", async () => {
+    const box = sandbox();
+    const extra = await run(box, ["list", "extra"]);
+    expect(extra.code).toBe(1);
+    expect(extra.stderr).toContain("Unexpected argument: extra");
+    expect(extra.stderr).toContain("Usage:");
+
+    const invalidAgent = await run(box, ["list", "-a", "nope"]);
+    expect(invalidAgent.code).toBe(1);
+    expect(invalidAgent.output).toContain("Invalid agents: nope");
   });
 });

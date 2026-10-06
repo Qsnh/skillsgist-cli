@@ -23,6 +23,10 @@ export function printable(text: string): string {
   return text.replace(UNPRINTABLE, (char) => (char === "\n" || char === "\t" ? char : ""));
 }
 
+export function oneLine(text: string): string {
+  return printable(text).replace(/[\n\t]/g, " ");
+}
+
 export function redact(text: string): string {
   let out = text;
   for (const key of knownKeys) out = out.split(key).join(maskKey(key));

@@ -1,8 +1,10 @@
 import { readFile, readdir, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { canonicalSkillsRoot, loadAgents, skillsRoot, type Agent, type AgentEnvironment, type Scope } from "./agents.js";
 import { skillName } from "./archive.js";
 import { CliError } from "./errors.js";
+import { homePath } from "./paths.js";
+import { oneLine, printable, redact } from "./source.js";
 
 export interface ListOptions {
   global: boolean;
@@ -140,4 +142,64 @@ export async function findInstalledSkills(environment: AgentEnvironment, options
     results.push(...(await scanScope(scopeOf(scope === "global"), candidates, filtered, scope === "project" ? skip : new Set())));
   }
   return results;
+}
+
+function textCell(text: string): string {
+  return redact(oneLine(text));
+}
+
+function jsonCell(text: string): string {
+  return redact(printable(text));
+}
+
+function agentNames(agents: Agent[]): string[] {
+  return agents.map((agent) => agent.displayName);
+}
+
+function displayPath(skill: InstalledSkill, place: { home: string; cwd: string }): string {
+  if (skill.scope === "global") return homePath(skill.path, place.home);
+  return `.${sep}${relative(place.cwd, skill.path)}`;
+}
+
+function textTable(skills: InstalledSkill[], place: { home: string; cwd: string }): string[] {
+  const header = ["NAME", "PATH", "AGENTS"];
+  const rows = skills.map((skill) => [
+    textCell(skill.name),
+    textCell(displayPath(skill, place)),
+    textCell(agentNames(skill.agents).join(", ") || "—"),
+  ]);
+  const table = [header, ...rows];
+  const widths = header.slice(0, -1).map((_, column) => Math.max(...table.map((cells) => cells[column].length)));
+  return table.map((cells) => [...widths.map((width, column) => cells[column].padEnd(width)), cells[widths.length]].join("  "));
+}
+
+function textSection(scope: ListScope, skills: InstalledSkill[], place: { home: string; cwd: string }): string {
+  if (skills.length === 0) return `No ${scope} skills`;
+  const count = skills.length;
+  const label = `${count} ${scope} skill${count === 1 ? "" : "s"}`;
+  return [label, "", ...textTable(skills, place)].join("\n");
+}
+
+function jsonRow(skill: InstalledSkill): { name: string; path: string; scope: ListScope; agents: string[] } {
+  return {
+    name: jsonCell(skill.name),
+    path: jsonCell(skill.path),
+    scope: skill.scope,
+    agents: agentNames(skill.agents).map(jsonCell),
+  };
+}
+
+export function formatInstalledSkills(skills: InstalledSkill[], options: ListOptions, place: { home: string; cwd: string }): string {
+  const scopes = listedScopes(options);
+  const byScope = (scope: ListScope) => skills.filter((skill) => skill.scope === scope);
+  if (options.json) {
+    const rows = scopes.flatMap((scope) => byScope(scope).map(jsonRow));
+    return `${JSON.stringify(rows, null, 2)}\n`;
+  }
+  const sections = scopes.map((scope) => textSection(scope, byScope(scope), place));
+  return `${sections.join("\n\n")}\n`;
+}
+
+export async function listSkills(environment: AgentEnvironment, options: ListOptions): Promise<string> {
+  return formatInstalledSkills(await findInstalledSkills(environment, options), options, environment);
 }

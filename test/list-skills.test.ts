@@ -3,7 +3,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadAgents, type AgentEnvironment } from "../src/agents.js";
 import { installSkill, type InstallOptions } from "../src/installer.js";
-import { findInstalledSkills, listedScopes, type InstalledSkill, type ListOptions, type ListScope } from "../src/list-skills.js";
+import {
+  findInstalledSkills,
+  formatInstalledSkills,
+  listedScopes,
+  listSkills,
+  type InstalledSkill,
+  type ListOptions,
+  type ListScope,
+} from "../src/list-skills.js";
 import { cleanup, sandboxExists, tempDir } from "./helpers/fs.js";
 
 afterEach(cleanup);
@@ -205,5 +213,122 @@ describe("findInstalledSkills", () => {
     writeSkillMd(join(cwd, ".claude/skills/real-name"), skillMd("real-name"));
     const result = simplify(await findInstalledSkills(environment(), listOptions()));
     expect(result).toEqual([{ name: "real-name", scope: "project", path: join(cwd, ".agents/skills/odd-dir"), agents: ["claude-code", "cursor"] }]);
+  });
+});
+
+describe("formatInstalledSkills", () => {
+  const place = { home: "/h", cwd: "/w" };
+  const agentsOf = (...ids: string[]) => {
+    const agents = loadAgents({ home: "/h", cwd: "/w", env: {}, exists: () => false });
+    return ids.map((id) => agents.find((agent) => agent.id === id)!);
+  };
+  const skill = (name: string, scope: ListScope, path: string, ids: string[] = []): InstalledSkill => ({ name, scope, path, agents: agentsOf(...ids) });
+
+  it("says nothing is installed, per requested scope", () => {
+    expect(formatInstalledSkills([], listOptions(), place)).toBe("No project skills\n\nNo global skills\n");
+    expect(formatInstalledSkills([], listOptions({ global: true }), place)).toBe("No global skills\n");
+    expect(formatInstalledSkills([], listOptions({ project: true }), place)).toBe("No project skills\n");
+  });
+
+  it("renders a table per scope, project first, aligned and without trailing spaces", () => {
+    const skills = [
+      skill("demo-skill", "project", "/w/.agents/skills/demo-skill", ["claude-code", "codex"]),
+      skill("other", "project", "/w/.claude/skills/other", ["claude-code"]),
+      skill("glob-skill", "global", "/h/.agents/skills/glob-skill", ["claude-code"]),
+    ];
+    const text = formatInstalledSkills(skills, listOptions(), place);
+    const lines = text.split("\n");
+    expect(lines).toHaveLength(11);
+    expect(lines[0]).toBe("2 project skills");
+    expect(lines[1]).toBe("");
+    const projectHeader = lines[2];
+    expect(projectHeader).toMatch(/^NAME +PATH +AGENTS$/);
+    expect(lines[3].indexOf("./.agents/skills/demo-skill")).toBe(projectHeader.indexOf("PATH"));
+    expect(lines[3].indexOf("Claude Code, Codex")).toBe(projectHeader.indexOf("AGENTS"));
+    expect(lines[4]).toContain("./.claude/skills/other");
+    expect(lines[5]).toBe("");
+    expect(lines[6]).toBe("1 global skill");
+    expect(lines[7]).toBe("");
+    const globalHeader = lines[8];
+    expect(globalHeader).toMatch(/^NAME +PATH +AGENTS$/);
+    expect(lines[9].indexOf("~/.agents/skills/glob-skill")).toBe(globalHeader.indexOf("PATH"));
+    expect(lines[10]).toBe("");
+    expect(lines.filter((line) => line !== line.trimEnd())).toEqual([]);
+    expect(text.endsWith("\n")).toBe(true);
+  });
+
+  it("renders project paths relative to cwd and global paths relative to, or outside, home", () => {
+    const project = formatInstalledSkills([skill("a", "project", "/w/.agents/skills/a")], listOptions({ project: true }), place);
+    expect(project).toContain("./.agents/skills/a");
+
+    const globalHome = formatInstalledSkills([skill("a", "global", "/h/.agents/skills/a")], listOptions({ global: true }), place);
+    expect(globalHome).toContain("~/.agents/skills/a");
+
+    const globalOutside = formatInstalledSkills([skill("a", "global", "/x/goose/skills/a")], listOptions({ global: true }), place);
+    expect(globalOutside).toContain("/x/goose/skills/a");
+  });
+
+  it("shows a dash for no agents and display names joined with a comma otherwise", () => {
+    const none = formatInstalledSkills([skill("solo", "project", "/w/.agents/skills/solo", [])], listOptions({ project: true }), place);
+    const row = none.split("\n").find((line) => line.startsWith("solo"))!;
+    expect(row.trimEnd().endsWith("—")).toBe(true);
+
+    const many = formatInstalledSkills(
+      [skill("multi", "project", "/w/.agents/skills/multi", ["claude-code", "codex"])],
+      listOptions({ project: true }),
+      place,
+    );
+    expect(many).toContain("Claude Code, Codex");
+  });
+
+  it("prints JSON with absolute paths, display names, and project rows first", () => {
+    const skills = [
+      skill("demo-skill", "project", "/w/.agents/skills/demo-skill", ["claude-code", "codex"]),
+      skill("glob-skill", "global", "/h/.agents/skills/glob-skill", ["claude-code"]),
+    ];
+    const text = formatInstalledSkills(skills, listOptions({ json: true }), place);
+    expect(text.endsWith("\n")).toBe(true);
+    expect(JSON.parse(text)).toEqual([
+      { name: "demo-skill", path: "/w/.agents/skills/demo-skill", scope: "project", agents: ["Claude Code", "Codex"] },
+      { name: "glob-skill", path: "/h/.agents/skills/glob-skill", scope: "global", agents: ["Claude Code"] },
+    ]);
+  });
+
+  it("prints an empty JSON array when nothing is installed", () => {
+    expect(formatInstalledSkills([], listOptions({ json: true }), place)).toBe("[]\n");
+  });
+
+  it("strips terminal escapes and keeps a name with a newline on one text row", () => {
+    const evil = skill("evil\x1b]52;c;ZXZpbA==\x07\nnext", "project", "/w/.agents/skills/evil", ["claude-code"]);
+    const text = formatInstalledSkills([evil], listOptions({ project: true }), place);
+    expect(text).not.toMatch(/[\x1b\x07]/);
+    expect(text.split("\n")).toHaveLength(5);
+
+    const json = formatInstalledSkills([evil], listOptions({ project: true, json: true }), place);
+    expect(json).not.toMatch(/[\x1b\x07]/);
+    expect(JSON.parse(json)[0].name).not.toMatch(/[\x1b\x07]/);
+  });
+
+  it("masks an install key embedded in a name, in text and JSON", () => {
+    const leaky = skill("https://h.example/i/abcdefghijkl", "project", "/w/.agents/skills/leaky", []);
+    const text = formatInstalledSkills([leaky], listOptions({ project: true }), place);
+    expect(text).toContain("/i/abcd…");
+    expect(text).not.toContain("abcdefghijkl");
+
+    const json = formatInstalledSkills([leaky], listOptions({ project: true, json: true }), place);
+    expect(json).toContain("/i/abcd…");
+    expect(json).not.toContain("abcdefghijkl");
+  });
+});
+
+describe("listSkills", () => {
+  it("renders the installed skills as text, end to end", async () => {
+    const { environment, install } = setup();
+    await install("demo-skill", ["claude-code"]);
+    const text = await listSkills(environment(), listOptions());
+    expect(text).toContain("1 project skill");
+    expect(text).toContain("./.agents/skills/demo-skill");
+    expect(text).toContain("Claude Code");
+    expect(text).toContain("No global skills");
   });
 });

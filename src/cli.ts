@@ -5,6 +5,7 @@ import { runAdd } from "./add.js";
 import { parseCommandLine, USAGE } from "./args.js";
 import { CliError } from "./errors.js";
 import { listAgents } from "./list-agents.js";
+import { listSkills } from "./list-skills.js";
 import { clackUi } from "./ui.js";
 
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -25,7 +26,10 @@ async function main(argv: string[]): Promise<number> {
       process.stdout.write(listAgents({ home: homedir(), cwd: process.cwd(), env: process.env }));
       return 0;
     }
-    if (command.kind === "list") return 0;
+    if (command.kind === "list") {
+      process.stdout.write(await listSkills({ home: homedir(), cwd: process.cwd(), env: process.env }, command.options));
+      return 0;
+    }
     return await runAdd(command.url, command.options, {
       ui,
       home: homedir(),

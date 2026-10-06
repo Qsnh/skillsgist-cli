@@ -1,10 +1,8 @@
 import { detectRunningAgent, loadAgents, skillsRoot, type AgentEnvironment, type RunningAgent } from "./agents.js";
 import { homePath } from "./paths.js";
-import { printable } from "./source.js";
+import { oneLine } from "./source.js";
 
 const HEADER = [" ", "ID", "NAME", "PROJECT", "GLOBAL"];
-
-const cell = (text: string) => printable(text).replace(/[\n\t]/g, " ");
 
 function insideNote(running: RunningAgent): string {
   if (!running.inAgent) return "";
@@ -19,7 +17,7 @@ export function listAgents(environment: AgentEnvironment): string {
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((agent) => {
       const global = skillsRoot(agent, { global: true, home, cwd });
-      return [agent.installed ? "✓" : " ", agent.id, agent.displayName, agent.skillsDir, global === null ? "—" : cell(homePath(global, home))];
+      return [agent.installed ? "✓" : " ", agent.id, agent.displayName, agent.skillsDir, global === null ? "—" : oneLine(homePath(global, home))];
     });
   const table = [HEADER, ...rows];
   const widths = HEADER.slice(0, -1).map((_, column) => Math.max(...table.map((cells) => cells[column].length)));
