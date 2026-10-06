@@ -164,6 +164,19 @@ describe("skillsgist add", () => {
   });
 });
 
+describe("the skillsgist binary", () => {
+  // npm chmods a bin only when it creates the link in node_modules/.bin, and
+  // npx rebuilds a local checkout through prepare on every run, so dist/cli.js
+  // has to come out of the build executable.
+  it.skipIf(process.platform === "win32")("runs directly, through its shebang", async () => {
+    const { version } = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
+    const stdout = await new Promise<string>((done, fail) => {
+      execFile(CLI, ["--version"], (error, out) => (error ? fail(error) : done(out)));
+    });
+    expect(stdout).toBe(`${version}\n`);
+  });
+});
+
 describe("skillsgist agents", () => {
   it("lists the agents without touching the network or the disk", async () => {
     const box = sandbox();
