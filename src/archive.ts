@@ -35,14 +35,27 @@ export function hasNameAndDescription(skillMd: string): boolean {
   return filled(data.name) && filled(data.description);
 }
 
-export function skillName(skillMd: string): string | null {
-  let data: Record<string, unknown>;
+function frontmatterFields(skillMd: string): { name: unknown; description: unknown } | null {
   try {
-    ({ data } = parseFrontmatter(skillMd.replace(/^\uFEFF/, "")));
+    const { data } = parseFrontmatter(skillMd.replace(/^\uFEFF/, ""));
+    return { name: data.name, description: data.description };
   } catch {
     return null;
   }
-  return filled(data.name) && filled(data.description) ? (data.name as string) : null;
+}
+
+export function skillName(skillMd: string): string | null {
+  const fields = frontmatterFields(skillMd);
+  if (fields === null) return null;
+  return filled(fields.name) && filled(fields.description) ? (fields.name as string) : null;
+}
+
+export function ownCopySkillName(skillMd: string, dirName: string): string | null {
+  const fields = frontmatterFields(skillMd);
+  if (fields === null) return null;
+  if (filled(fields.name) && filled(fields.description)) return fields.name as string;
+  if (!filled(fields.name) && filled(fields.description)) return dirName;
+  return null;
 }
 
 export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimits = DEFAULT_LIMITS): SkillFiles {

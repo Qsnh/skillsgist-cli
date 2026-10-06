@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -142,6 +143,32 @@ describe("findInstalledSkills", () => {
     ]);
   });
 
+  it("lists a shared cwd/home directory once, as global, when filtered to a single agent", async () => {
+    const root = tempDir();
+    const home = join(root, "shared");
+    mkdirSync(home);
+    const cwd = home;
+    const exists = sandboxExists(root);
+    mkdirSync(join(home, ".claude"));
+    writeSkillMd(join(home, ".claude/skills/demo-skill"), skillMd("demo-skill"));
+    const environment: AgentEnvironment = { home, cwd, env: {}, exists };
+    const result = simplify(await findInstalledSkills(environment, listOptions({ agents: ["claude-code"] })));
+    expect(result).toEqual([{ name: "demo-skill", scope: "global", path: join(home, ".claude/skills/demo-skill"), agents: ["claude-code"] }]);
+  });
+
+  it("lists a skill once, as global, when home is a symlink to cwd's realpath", async () => {
+    const root = tempDir();
+    const realHome = join(root, "real-home");
+    mkdirSync(realHome);
+    const homeLink = join(root, "home-link");
+    symlinkSync(realHome, homeLink);
+    const exists = sandboxExists(root);
+    writeSkillMd(join(realHome, ".agents/skills/demo-skill"), skillMd("demo-skill"));
+    const environment: AgentEnvironment = { home: homeLink, cwd: realHome, env: {}, exists };
+    const result = simplify(await findInstalledSkills(environment, listOptions()));
+    expect(result).toEqual([{ name: "demo-skill", scope: "global", path: join(homeLink, ".agents/skills/demo-skill"), agents: [] }]);
+  });
+
   it("filters directories by the given agents, keeps '*' as no filter, and rejects unknown ids", async () => {
     const { cwd, environment, install } = setup();
     writeSkillMd(join(cwd, ".agents/skills/only-canonical"), skillMd("only-canonical"));
@@ -186,6 +213,15 @@ describe("findInstalledSkills", () => {
     expect(result).toEqual([]);
   });
 
+  it.skipIf(process.platform === "win32")("skips a FIFO named SKILL.md without hanging", async () => {
+    const { cwd, environment } = setup();
+    const dir = join(cwd, ".agents/skills/fifo-skill");
+    mkdirSync(dir, { recursive: true });
+    execFileSync("mkfifo", [join(dir, "SKILL.md")]);
+    const result = await findInstalledSkills(environment(), listOptions());
+    expect(result).toEqual([]);
+  });
+
   it("names only detected Trae variants for a shared .trae/skills directory", async () => {
     const { home, cwd, environment } = setup();
     writeSkillMd(join(cwd, ".trae/skills/demo-skill"), skillMd("demo-skill"));
@@ -196,13 +232,62 @@ describe("findInstalledSkills", () => {
     expect(after).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, ".trae/skills/demo-skill"), agents: ["trae-cn"] }]);
   });
 
-  it("detects Eve's own directory and names it", async () => {
+  it("does not list a project-owned agent's directory when that agent is undetected", async () => {
     const { cwd, environment } = setup();
+    writeSkillMd(join(cwd, "skills/demo-skill"), skillMd("demo-skill"));
+    const result = await findInstalledSkills(environment(), listOptions());
+    expect(result).toEqual([]);
+  });
+
+  it("lists a project-owned agent's directory once that agent is detected", async () => {
+    const { home, cwd, environment } = setup();
+    writeSkillMd(join(cwd, "skills/demo-skill"), skillMd("demo-skill"));
+    mkdirSync(join(home, ".openclaw"));
+    const result = simplify(await findInstalledSkills(environment(), listOptions()));
+    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "skills/demo-skill"), agents: ["openclaw"] }]);
+  });
+
+  it("lists an undetected project-owned agent's directory when named with -a", async () => {
+    const { cwd, environment } = setup();
+    writeSkillMd(join(cwd, "skills/demo-skill"), skillMd("demo-skill"));
+    const result = simplify(await findInstalledSkills(environment(), listOptions({ agents: ["openclaw"] })));
+    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "skills/demo-skill"), agents: ["openclaw"] }]);
+  });
+
+  function withEve(cwd: string) {
     mkdirSync(join(cwd, "agent"));
     writeFileSync(join(cwd, "package.json"), JSON.stringify({ dependencies: { eve: "1" } }));
-    writeSkillMd(join(cwd, "agent/skills/demo-skill"), skillMd("demo-skill"));
+  }
+
+  it("detects Eve's symlink-mode own copy and merges it into the canonical row", async () => {
+    const { cwd, environment, install } = setup();
+    withEve(cwd);
+    await install("demo-skill", ["eve"]);
+    const result = simplify(await findInstalledSkills(environment(), listOptions()));
+    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, ".agents/skills/demo-skill"), agents: ["eve"] }]);
+  });
+
+  it("detects Eve's copy-mode own copy with no canonical directory at all", async () => {
+    const { cwd, environment, install } = setup();
+    withEve(cwd);
+    await install("demo-skill", ["eve"], { copy: true });
     const result = simplify(await findInstalledSkills(environment(), listOptions()));
     expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "agent/skills/demo-skill"), agents: ["eve"] }]);
+  });
+
+  it("still finds Eve's copy-mode copy when filtered to just eve", async () => {
+    const { cwd, environment, install } = setup();
+    withEve(cwd);
+    await install("demo-skill", ["eve"], { copy: true });
+    const result = simplify(await findInstalledSkills(environment(), listOptions({ agents: ["eve"] })));
+    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "agent/skills/demo-skill"), agents: ["eve"] }]);
+  });
+
+  it("still skips a nameless SKILL.md in a directory not read by an ownCopy agent", async () => {
+    const { cwd, environment } = setup();
+    writeSkillMd(join(cwd, ".agents/skills/no-name"), "---\ndescription: Demo.\n---\n");
+    const result = await findInstalledSkills(environment(), listOptions());
+    expect(result).toEqual([]);
   });
 
   it("names a skill by its frontmatter and merges directories sharing that name", async () => {

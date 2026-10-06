@@ -1,7 +1,7 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { canonicalSkillsRoot, loadAgents, skillsRoot, type Agent, type AgentEnvironment, type Scope } from "./agents.js";
-import { skillName } from "./archive.js";
+import { ownCopySkillName, skillName } from "./archive.js";
 import { CliError } from "./errors.js";
 import { homePath } from "./paths.js";
 import { oneLine, printable, redact } from "./source.js";
@@ -49,9 +49,10 @@ function candidateAgents(agents: Agent[], options: ListOptions): { candidates: A
   return { candidates: unique.map((id) => byAgentId.get(id) as Agent), filtered: true };
 }
 
-function directoryAgents(scope: Scope, candidates: Agent[]): Map<string, Agent[]> {
+function directoryAgents(scope: Scope, candidates: Agent[], filtered: boolean): Map<string, Agent[]> {
   const dirs = new Map<string, Agent[]>();
   for (const agent of candidates) {
+    if (agent.projectOwned && !agent.installed && !filtered) continue;
     const root = skillsRoot(agent, scope);
     if (root === null) continue;
     const list = dirs.get(root);
@@ -75,7 +76,15 @@ function namedAgents(agents: Agent[], filtered: boolean): Agent[] {
   return filtered || agents.length === 1 ? agents : agents.filter((agent) => agent.installed);
 }
 
-async function scanDirectory(dir: string, agents: Agent[]): Promise<FoundSkill[]> {
+async function realOrResolved(dir: string): Promise<string> {
+  try {
+    return await realpath(dir);
+  } catch {
+    return resolve(dir);
+  }
+}
+
+async function scanDirectory(dir: string, agents: Agent[], ownCopy: boolean): Promise<FoundSkill[]> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -93,13 +102,21 @@ async function scanDirectory(dir: string, agents: Agent[]): Promise<FoundSkill[]
       continue;
     }
     if (!info.isDirectory()) continue;
-    let contents: string;
+    const skillMdPath = join(path, "SKILL.md");
+    let skillMdInfo;
     try {
-      contents = await readFile(join(path, "SKILL.md"), "utf8");
+      skillMdInfo = await stat(skillMdPath);
     } catch {
       continue;
     }
-    const name = skillName(contents);
+    if (!skillMdInfo.isFile()) continue;
+    let contents: string;
+    try {
+      contents = await readFile(skillMdPath, "utf8");
+    } catch {
+      continue;
+    }
+    const name = ownCopy ? ownCopySkillName(contents, entry.name) : skillName(contents);
     if (name === null) continue;
     found.push({ name, path, agents });
   }
@@ -107,12 +124,13 @@ async function scanDirectory(dir: string, agents: Agent[]): Promise<FoundSkill[]
 }
 
 async function scanScope(scope: Scope, candidates: Agent[], filtered: boolean, skip: Set<string>): Promise<InstalledSkill[]> {
-  const dirs = directoryAgents(scope, candidates);
+  const dirs = directoryAgents(scope, candidates, filtered);
   const order = orderedDirs(scope, dirs);
   const merged = new Map<string, InstalledSkill>();
   for (const dir of order) {
-    if (skip.has(resolve(dir))) continue;
-    const found = await scanDirectory(dir, namedAgents(dirs.get(dir)!, filtered));
+    if (skip.size > 0 && skip.has(await realOrResolved(dir))) continue;
+    const dirAgents = dirs.get(dir)!;
+    const found = await scanDirectory(dir, namedAgents(dirAgents, filtered), dirAgents.some((agent) => agent.ownCopy));
     for (const skill of found) {
       const existing = merged.get(skill.name);
       if (existing === undefined) {
@@ -135,7 +153,8 @@ export async function findInstalledSkills(environment: AgentEnvironment, options
   const scopeOf = (global: boolean): Scope => ({ global, home: environment.home, cwd: environment.cwd });
   const skip = new Set<string>();
   if (scopes.includes("project") && scopes.includes("global")) {
-    for (const dir of directoryAgents(scopeOf(true), candidates).keys()) skip.add(resolve(dir));
+    const globalDirs = directoryAgents(scopeOf(true), candidates, filtered).keys();
+    for (const dir of await Promise.all([...globalDirs].map(realOrResolved))) skip.add(dir);
   }
   const results: InstalledSkill[] = [];
   for (const scope of scopes) {
