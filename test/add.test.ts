@@ -324,11 +324,14 @@ describe("runAdd", () => {
     await expect(runAdd(url, options({ skills: ["nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow(
       "No skill named nope in this registry. Available: demo-skill, other-skill",
     );
+    await expect(runAdd(url, options({ skills: ["*", "nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow("No skill named nope");
   });
 
-  it("rejects an unknown agent id", async () => {
+  it("rejects an unknown agent id, even next to '*'", async () => {
     const box = sandbox();
     await expect(runAdd(url, options({ agents: ["nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow(/Invalid agents: nope/);
+    await expect(runAdd(url, options({ agents: ["*", "nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow(/Invalid agents: nope/);
+    expect(readdirSync(box.cwd)).toEqual([]);
   });
 
   it("survives running the same install twice and reports only the copy it replaces", async () => {

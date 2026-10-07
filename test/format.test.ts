@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayWidth, formatTable, plural } from "../src/format.js";
+import { compareBy, displayWidth, formatTable, plural } from "../src/format.js";
 
 describe("plural", () => {
   it.each<[number, string]>([
@@ -8,6 +8,13 @@ describe("plural", () => {
     [2, "2 skills"],
   ])("counts %i", (count, text) => {
     expect(plural(count, "skill")).toBe(text);
+  });
+});
+
+describe("compareBy", () => {
+  it("sorts by the raw string order of the key, not by locale", () => {
+    const rows = [{ id: "b" }, { id: "B" }, { id: "a" }, { id: "b" }];
+    expect(rows.sort(compareBy((row) => row.id)).map((row) => row.id)).toEqual(["B", "a", "b", "b"]);
   });
 });
 

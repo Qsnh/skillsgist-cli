@@ -33,6 +33,14 @@ export function redact(text: string): string {
   return out.replace(ANY_KEY_SEGMENT, (match, prefix: string, segment: string) => (segment.endsWith("…") ? match : `${prefix}${maskKey(segment)}`));
 }
 
+export function displayText(text: string): string {
+  return redact(printable(text));
+}
+
+export function displayLine(text: string): string {
+  return redact(oneLine(text));
+}
+
 function decoded(segment: string): string {
   try {
     return decodeURIComponent(segment);

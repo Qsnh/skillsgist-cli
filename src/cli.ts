@@ -10,6 +10,12 @@ import { clackUi } from "./ui.js";
 
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EPIPE") throw err;
+  });
+}
+
 async function main(argv: string[]): Promise<number> {
   const ui = clackUi();
   try {
@@ -27,8 +33,11 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     if (command.kind === "list") {
-      process.stdout.write(await listSkills({ home: homedir(), cwd: process.cwd(), env: process.env }, command.options));
-      return 0;
+      const { output, problems } = await listSkills({ home: homedir(), cwd: process.cwd(), env: process.env }, command.options);
+      process.stdout.write(output);
+      if (problems.length === 0) return 0;
+      ui.error(problems.join("\n"));
+      return 1;
     }
     return await runAdd(command.url, command.options, {
       ui,

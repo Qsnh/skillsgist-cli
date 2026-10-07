@@ -1,5 +1,5 @@
 import { detectRunningAgent, loadAgents, skillsRoot, type AgentEnvironment, type RunningAgent } from "./agents.js";
-import { formatTable } from "./format.js";
+import { compareBy, formatTable } from "./format.js";
 import { homePath } from "./paths.js";
 import { oneLine } from "./source.js";
 
@@ -15,7 +15,7 @@ export function listAgents(environment: AgentEnvironment): string {
   const { home, cwd } = environment;
   const agents = loadAgents(environment);
   const rows = [...agents]
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .sort(compareBy((agent) => agent.id))
     .map((agent) => {
       const global = skillsRoot(agent, { global: true, home, cwd });
       return [agent.installed ? "✓" : " ", agent.id, agent.displayName, agent.skillsDir, global === null ? "—" : oneLine(homePath(global, home))];

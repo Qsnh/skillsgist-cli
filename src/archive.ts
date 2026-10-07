@@ -11,18 +11,18 @@ export interface ArchiveLimits {
 
 export const DEFAULT_LIMITS: ArchiveLimits = { maxFiles: 1000, maxBytes: 50 * 1024 * 1024 };
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 
 export function isSafeArchivePath(path: string): boolean {
   if (path === "" || path.startsWith("/") || path.includes("\\") || path.includes("\0") || /^[a-zA-Z]:/.test(path)) return false;
   return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
-function parseFrontmatter(skillMd: string): { data: Record<string, unknown>; body: string } {
+function frontmatter(skillMd: string): Record<string, unknown> {
   const match = FRONTMATTER.exec(skillMd);
-  if (match === null) return { data: {}, body: skillMd };
+  if (match === null) return {};
   try {
-    return { data: (parse(match[1], { logLevel: "error" }) ?? {}) as Record<string, unknown>, body: match[2] };
+    return (parse(match[1], { logLevel: "error" }) ?? {}) as Record<string, unknown>;
   } catch {
     throw new Error("SKILL.md has frontmatter that is not valid YAML");
   }
@@ -30,13 +30,9 @@ function parseFrontmatter(skillMd: string): { data: Record<string, unknown>; bod
 
 const filled = (value: unknown) => typeof value === "string" && value !== "";
 
-function describedName(skillMd: string): string | null {
-  const { data } = parseFrontmatter(skillMd.replace(/^\uFEFF/, ""));
+export function describedName(skillMd: string): string | null {
+  const data = frontmatter(skillMd.replace(/^\uFEFF/, ""));
   return filled(data.name) && filled(data.description) ? (data.name as string) : null;
-}
-
-export function hasNameAndDescription(skillMd: string): boolean {
-  return describedName(skillMd) !== null;
 }
 
 export function skillName(skillMd: string): string | null {
@@ -77,7 +73,7 @@ export function unpackSkill(name: string, bytes: Uint8Array, limits: ArchiveLimi
   if (skillMd === undefined) throw new CliError(`${name}: the archive has no SKILL.md at its root`);
   let valid: boolean;
   try {
-    valid = hasNameAndDescription(new TextDecoder().decode(skillMd));
+    valid = describedName(new TextDecoder().decode(skillMd)) !== null;
   } catch (err) {
     throw new CliError(`${name}: ${(err as Error).message}`);
   }

@@ -93,14 +93,13 @@ function sharedNames(agents: Agent[]): string[] {
 }
 
 async function chooseSkills(all: SkillEntry[], options: AddOptions, yes: boolean, ui: Ui): Promise<Cancellable<SkillEntry[]>> {
-  if (options.skills?.includes("*")) return all;
   if (options.skills) {
-    const wanted = unique(options.skills.map((name) => name.toLowerCase()));
+    const wanted = unique(options.skills.filter((name) => name !== "*").map((name) => name.toLowerCase()));
     const missing = wanted.filter((name) => !all.some((skill) => skill.name === name));
     if (missing.length > 0) {
       throw new CliError(`No skill named ${missing.join(", ")} in this registry. Available: ${all.map((skill) => skill.name).join(", ")}`);
     }
-    return all.filter((skill) => wanted.includes(skill.name));
+    return options.skills.includes("*") ? all : all.filter((skill) => wanted.includes(skill.name));
   }
   if (all.length === 1 || yes) return all;
   return ui.selectSkills(all);
@@ -113,8 +112,10 @@ async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, 
     const implied = extra.filter((agent) => !picked.includes(agent));
     return { agents: [...picked, ...implied], implied: new Set(implied) };
   };
-  if (options.agents?.includes("*")) return select([], agents);
-  if (options.agents) return select(pick(options.agents));
+  if (options.agents) {
+    const named = pick(options.agents.filter((id) => id !== "*"));
+    return options.agents.includes("*") ? select([], agents) : select(named);
+  }
   if (running.inAgent) return select(running.id === null ? [] : pick([running.id]), universal);
   const installed = agents.filter((agent) => agent.installed);
   if (installed.length === 0) {

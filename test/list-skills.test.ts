@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadAgents, type AgentEnvironment } from "../src/agents.js";
@@ -11,6 +11,7 @@ import {
   listedScopes,
   listSkills,
   type InstalledSkill,
+  type Listing,
   type ListOptions,
   type ListScope,
 } from "../src/list-skills.js";
@@ -50,7 +51,9 @@ function setup() {
 
 const listOptions = (overrides: Partial<ListOptions> = {}): ListOptions => ({ global: false, project: false, agents: null, json: false, ...overrides });
 
-const simplify = (skills: InstalledSkill[]) =>
+const nothing: Listing = { skills: [], problems: [] };
+
+const simplify = ({ skills }: Listing) =>
   skills.map((skill) => ({ name: skill.name, scope: skill.scope, path: skill.path, agents: skill.agents.map((agent) => agent.id) }));
 
 describe("listedScopes", () => {
@@ -67,7 +70,7 @@ describe("listedScopes", () => {
 describe("findInstalledSkills", () => {
   it("returns nothing when nothing is installed", async () => {
     const { environment } = setup();
-    expect(await findInstalledSkills(environment(), listOptions())).toEqual([]);
+    expect(await findInstalledSkills(environment(), listOptions())).toEqual(nothing);
   });
 
   it("names the sole agent of its own directory even when the canonical directory names nobody", async () => {
@@ -210,6 +213,7 @@ describe("findInstalledSkills", () => {
     await expect(findInstalledSkills(environment(), listOptions({ agents: ["nope"] }))).rejects.toThrow(
       /^Invalid agents: nope\. Valid agents: aider-desk, amp,/,
     );
+    await expect(findInstalledSkills(environment(), listOptions({ agents: ["*", "claud-code"] }))).rejects.toThrow(/^Invalid agents: claud-code\./);
   });
 
   it("skips anything that is not a valid skill without crashing", async () => {
@@ -223,7 +227,7 @@ describe("findInstalledSkills", () => {
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     writeFileSync(join(cwd, ".claude/skills"), "not a directory");
     const result = await findInstalledSkills(environment(), listOptions());
-    expect(result).toEqual([]);
+    expect(result).toEqual(nothing);
   });
 
   it.skipIf(process.platform === "win32")("skips a FIFO named SKILL.md without hanging", async () => {
@@ -232,7 +236,7 @@ describe("findInstalledSkills", () => {
     mkdirSync(dir, { recursive: true });
     execFileSync("mkfifo", [join(dir, "SKILL.md")]);
     const result = await findInstalledSkills(environment(), listOptions());
-    expect(result).toEqual([]);
+    expect(result).toEqual(nothing);
   });
 
   it("names only detected Trae variants for a shared .trae/skills directory", async () => {
@@ -249,15 +253,29 @@ describe("findInstalledSkills", () => {
     const { cwd, environment } = setup();
     writeSkillMd(join(cwd, "skills/demo-skill"), skillMd("demo-skill"));
     const result = await findInstalledSkills(environment(), listOptions());
-    expect(result).toEqual([]);
+    expect(result).toEqual(nothing);
   });
 
-  it("lists a project-owned agent's directory once that agent is detected", async () => {
+  it("does not take a project's own skills/ folders for OpenClaw's because ~/.openclaw exists", async () => {
     const { home, cwd, environment } = setup();
-    writeSkillMd(join(cwd, "skills/demo-skill"), skillMd("demo-skill"));
+    writeSkillMd(join(cwd, "skills/authored-skill"), skillMd("authored-skill"));
     mkdirSync(join(home, ".openclaw"));
+    expect(await findInstalledSkills(environment(), listOptions())).toEqual(nothing);
+  });
+
+  it("names OpenClaw for the links add put in a project's skills/ folder, and not for the project's own folders", async () => {
+    const { cwd, environment, install } = setup();
+    writeSkillMd(join(cwd, "skills/authored-skill"), skillMd("authored-skill"));
+    await install("demo-skill", ["openclaw"]);
     const result = simplify(await findInstalledSkills(environment(), listOptions()));
-    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "skills/demo-skill"), agents: ["openclaw"] }]);
+    expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, ".agents/skills/demo-skill"), agents: ["openclaw"] }]);
+  });
+
+  it("lists a project-owned agent's global directory once that agent is detected", async () => {
+    const { home, environment } = setup();
+    writeSkillMd(join(home, ".openclaw/skills/demo-skill"), skillMd("demo-skill"));
+    const result = simplify(await findInstalledSkills(environment(), listOptions()));
+    expect(result).toEqual([{ name: "demo-skill", scope: "global", path: join(home, ".openclaw/skills/demo-skill"), agents: ["openclaw"] }]);
   });
 
   it("lists an undetected project-owned agent's directory when named with -a", async () => {
@@ -274,10 +292,12 @@ describe("findInstalledSkills", () => {
     expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "skills/demo-skill"), agents: ["openclaw"] }]);
   });
 
-  it("does not take a project's data/skills folder alone as AstrBot", async () => {
-    const { cwd, environment } = setup();
+  it("takes a project's data/skills folder as AstrBot's only when the project itself is an AstrBot one", async () => {
+    const { home, cwd, environment } = setup();
     writeSkillMd(join(cwd, "data/skills/demo-skill"), skillMd("demo-skill"));
-    expect(await findInstalledSkills(environment(), listOptions())).toEqual([]);
+    expect(await findInstalledSkills(environment(), listOptions())).toEqual(nothing);
+    mkdirSync(join(home, ".astrbot"));
+    expect(await findInstalledSkills(environment(), listOptions())).toEqual(nothing);
     writeFileSync(join(cwd, "data/cmd_config.json"), "{}");
     const result = simplify(await findInstalledSkills(environment(), listOptions()));
     expect(result).toEqual([{ name: "demo-skill", scope: "project", path: join(cwd, "data/skills/demo-skill"), agents: ["astrbot"] }]);
@@ -287,7 +307,7 @@ describe("findInstalledSkills", () => {
     const { cwd, environment } = setup();
     writeSkillMd(join(cwd, ".agents/skills/no-name"), "---\ndescription: Demo.\n---\n");
     const result = await findInstalledSkills(environment(), listOptions());
-    expect(result).toEqual([]);
+    expect(result).toEqual(nothing);
   });
 
   it("names a skill by its frontmatter and keeps separate folders sharing that name apart", async () => {
@@ -310,6 +330,23 @@ ${"x".repeat(1024 * 1024)}
 `);
     const result = simplify(await findInstalledSkills(environment(), listOptions()));
     expect(result.map((skill) => skill.name)).toEqual(["big"]);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("lists what it can read and names the folders it cannot", async () => {
+    const { cwd, environment } = setup();
+    writeSkillMd(join(cwd, ".agents/skills/readable"), skillMd("readable"));
+    writeSkillMd(join(cwd, ".agents/skills/locked"), skillMd("locked"));
+    writeSkillMd(join(cwd, ".claude/skills/hidden"), skillMd("hidden"));
+    chmodSync(join(cwd, ".agents/skills/locked"), 0o000);
+    chmodSync(join(cwd, ".claude/skills"), 0o000);
+    try {
+      const result = await findInstalledSkills(environment(), listOptions({ project: true }));
+      expect(result.skills.map((skill) => skill.name)).toEqual(["readable"]);
+      expect(result.problems).toEqual(["Cannot read ./.agents/skills/locked/SKILL.md (EACCES)", "Cannot read ./.claude/skills (EACCES)"]);
+    } finally {
+      chmodSync(join(cwd, ".agents/skills/locked"), 0o755);
+      chmodSync(join(cwd, ".claude/skills"), 0o755);
+    }
   });
 });
 
@@ -386,7 +423,7 @@ describe("formatInstalledSkills", () => {
     expect(many).toContain("Claude Code, Codex");
   });
 
-  it("prints JSON with absolute paths, display names, and project rows first", () => {
+  it("prints JSON with absolute paths, agent ids, and project rows first", () => {
     const skills = [
       skill("demo-skill", "project", "/w/.agents/skills/demo-skill", ["claude-code", "codex"]),
       skill("glob-skill", "global", "/h/.agents/skills/glob-skill", ["claude-code"]),
@@ -394,9 +431,15 @@ describe("formatInstalledSkills", () => {
     const text = formatInstalledSkills(skills, listOptions({ json: true }), place);
     expect(text.endsWith("\n")).toBe(true);
     expect(JSON.parse(text)).toEqual([
-      { name: "demo-skill", path: "/w/.agents/skills/demo-skill", scope: "project", agents: ["Claude Code", "Codex"] },
-      { name: "glob-skill", path: "/h/.agents/skills/glob-skill", scope: "global", agents: ["Claude Code"] },
+      { name: "demo-skill", path: "/w/.agents/skills/demo-skill", scope: "project", agents: ["claude-code", "codex"] },
+      { name: "glob-skill", path: "/h/.agents/skills/glob-skill", scope: "global", agents: ["claude-code"] },
     ]);
+  });
+
+  it("prints the real path in JSON, whatever characters it holds", () => {
+    const path = "/w/odd\u202e\x1b/h.example/i/abcdefghijkl/.agents/skills/a";
+    const json = formatInstalledSkills([skill("a", "project", path)], listOptions({ json: true }), place);
+    expect(JSON.parse(json)[0].path).toBe(path);
   });
 
   it("prints an empty JSON array when nothing is installed", () => {
@@ -430,10 +473,11 @@ describe("listSkills", () => {
   it("renders the installed skills as text, end to end", async () => {
     const { environment, install } = setup();
     await install("demo-skill", ["claude-code"]);
-    const text = await listSkills(environment(), listOptions());
-    expect(text).toContain("1 project skill");
-    expect(text).toContain("./.agents/skills/demo-skill");
-    expect(text).toContain("Claude Code");
-    expect(text).toContain("No global skills");
+    const { output, problems } = await listSkills(environment(), listOptions());
+    expect(output).toContain("1 project skill");
+    expect(output).toContain("./.agents/skills/demo-skill");
+    expect(output).toContain("Claude Code");
+    expect(output).toContain("No global skills");
+    expect(problems).toEqual([]);
   });
 });

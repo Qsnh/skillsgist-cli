@@ -1,5 +1,5 @@
-import { execFile } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -298,5 +298,37 @@ describe("skillsgist list", () => {
     const invalidAgent = await run(box, ["list", "-a", "nope"]);
     expect(invalidAgent.code).toBe(1);
     expect(invalidAgent.output).toContain("Invalid agents: nope");
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("prints what it can, names what it cannot read, and exits 1", async () => {
+    const box = sandbox();
+    for (const name of ["readable", "locked"]) {
+      mkdirSync(join(box.cwd, ".agents/skills", name), { recursive: true });
+      writeFileSync(join(box.cwd, ".agents/skills", name, "SKILL.md"), `---\nname: ${name}\ndescription: Demo.\n---\n`);
+    }
+    chmodSync(join(box.cwd, ".agents/skills/locked"), 0o000);
+    try {
+      const result = await run(box, ["list", "-p", "--json"]);
+      expect(result.code).toBe(1);
+      expect((JSON.parse(result.stdout) as Array<{ name: string }>).map((row) => row.name)).toEqual(["readable"]);
+      expect(result.stderr).toContain("Cannot read ./.agents/skills/locked/SKILL.md (EACCES)");
+    } finally {
+      chmodSync(join(box.cwd, ".agents/skills/locked"), 0o755);
+    }
+  });
+
+  it("exits quietly when the reader of its output goes away", async () => {
+    const box = sandbox();
+    for (let i = 0; i < 2000; i += 1) {
+      mkdirSync(join(box.cwd, ".agents/skills", `skill-${i}`), { recursive: true });
+      writeFileSync(join(box.cwd, ".agents/skills", `skill-${i}`, "SKILL.md"), `---\nname: skill-${i}\ndescription: Demo.\n---\n`);
+    }
+    const child = spawn(process.execPath, [CLI, "list", "-p", "--json"], { cwd: box.cwd, env: { PATH: process.env.PATH ?? "", HOME: box.home } });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    child.stdout.once("data", () => child.stdout.destroy());
+    const code = await new Promise<number | null>((done) => child.on("close", done));
+    expect(stderr).toBe("");
+    expect(code).toBe(0);
   });
 });

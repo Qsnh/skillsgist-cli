@@ -25,6 +25,7 @@ interface AgentDef {
   skillsDir: string;
   globalDir: (p: AgentPaths, exists: Exists) => string | null;
   detect: (p: AgentPaths, exists: Exists) => boolean;
+  detectInProject?: (p: AgentPaths, exists: Exists) => boolean;
   hiddenInPrompt?: boolean;
   unlisted?: boolean;
   projectOwned?: boolean;
@@ -40,6 +41,7 @@ export interface Agent {
   hidden: boolean;
   projectOwned: boolean;
   installed: boolean;
+  detectedInProject: boolean;
 }
 
 export interface AgentEnvironment {
@@ -73,7 +75,7 @@ const AGENTS: AgentDef[] = [
   { id: "amp", displayName: "Amp", skillsDir: ".agents/skills", globalDir: (p) => join(p.config, "agents/skills"), detect: (p, exists) => exists(join(p.config, "amp")) },
   { id: "antigravity", displayName: "Antigravity", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/antigravity/skills"), detect: (p, exists) => exists(join(p.home, ".gemini/antigravity")) },
   { id: "antigravity-cli", displayName: "Antigravity CLI", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/antigravity-cli/skills"), detect: (p, exists) => exists(join(p.home, ".gemini/antigravity-cli")) },
-  { id: "astrbot", displayName: "AstrBot", skillsDir: "data/skills", globalDir: (p) => join(p.home, ".astrbot/data/skills"), detect: (p, exists) => exists(join(p.cwd, ".astrbot")) || exists(join(p.cwd, "data/cmd_config.json")) || exists(join(p.home, ".astrbot")), projectOwned: true },
+  { id: "astrbot", displayName: "AstrBot", skillsDir: "data/skills", globalDir: (p) => join(p.home, ".astrbot/data/skills"), detect: (p, exists) => exists(join(p.home, ".astrbot")), detectInProject: (p, exists) => exists(join(p.cwd, ".astrbot")) || exists(join(p.cwd, "data/cmd_config.json")), projectOwned: true },
   { id: "autohand-code", displayName: "Autohand Code CLI", skillsDir: ".autohand/skills", globalDir: (p) => join(p.autohand, "skills"), detect: (p, exists) => exists(p.autohand) },
   { id: "augment", displayName: "Augment", skillsDir: ".augment/skills", globalDir: (p) => join(p.home, ".augment/skills"), detect: (p, exists) => exists(join(p.home, ".augment")) },
   { id: "bob", displayName: "IBM Bob", skillsDir: ".bob/skills", globalDir: (p) => join(p.home, ".bob/skills"), detect: (p, exists) => exists(join(p.home, ".bob")) },
@@ -182,6 +184,7 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
   const paths = agentPaths(environment.home, environment.cwd, environment.env);
   return AGENTS.map((def) => {
     const canonical = def.skillsDir === CANONICAL_SKILLS_DIR;
+    const detectedInProject = def.detectInProject?.(paths, exists) ?? false;
     return {
       id: def.id,
       displayName: def.displayName,
@@ -191,7 +194,8 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
       universal: canonical && def.unlisted !== true,
       hidden: def.hiddenInPrompt === true,
       projectOwned: def.projectOwned === true,
-      installed: def.detect(paths, exists),
+      installed: detectedInProject || def.detect(paths, exists),
+      detectedInProject,
     };
   });
 }

@@ -53,6 +53,18 @@ describe("loadAgents", () => {
     expect(byId(load({}, only(marker)), "astrbot").installed).toBe(true);
   });
 
+  it.each<[string, boolean]>([
+    ["/w/.astrbot", true],
+    ["/w/data/cmd_config.json", true],
+    ["/h/.astrbot", false],
+  ])("tells whether %s makes the project itself an AstrBot one", (marker, inProject) => {
+    expect(byId(load({}, only(marker)), "astrbot").detectedInProject).toBe(inProject);
+  });
+
+  it("finds no project of OpenClaw's own, whatever is in the home directory", () => {
+    expect(byId(load({}, only("/h/.openclaw", "/w/skills")), "openclaw")).toMatchObject({ installed: true, detectedInProject: false });
+  });
+
   it("does not take a project's data/skills folder for AstrBot", () => {
     expect(byId(load({}, only("/w/data", "/w/data/skills")), "astrbot").installed).toBe(false);
   });
