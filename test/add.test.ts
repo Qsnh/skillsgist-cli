@@ -100,18 +100,30 @@ describe("runAdd", () => {
     expect(filesContaining(box.home, KEY)).toEqual([]);
   });
 
-  it("links the detected agents and the universal directory inside an agent it does not know", async () => {
+  it("installs only into the universal directory inside an agent it does not know", async () => {
     const box = sandbox({ AI_AGENT: "v0" }, false);
     mkdirSync(join(box.home, ".claude"));
+    mkdirSync(join(box.home, ".roo"));
     const ui = fakeUi();
     expect(await runAdd(url, options({ skills: ["demo-skill"], global: true, yes: true }), box.context(ui.ui))).toBe(0);
     expect(ui.asked).toEqual([]);
     expect(ui.text()).toContain("An agent detected");
     expect(existsSync(join(box.home, ".agents/skills/demo-skill/SKILL.md"))).toBe(true);
-    expect(lstatSync(join(box.home, ".claude/skills/demo-skill")).isSymbolicLink()).toBe(true);
-    expect(ui.text()).toContain("symlinked: Claude Code");
+    expect(readdirSync(join(box.home, ".claude"))).toEqual([]);
+    expect(readdirSync(join(box.home, ".roo"))).toEqual([]);
+    expect(ui.text()).not.toContain("symlinked");
     expect(ui.text()).not.toContain(KEY);
     expect(filesContaining(box.home, KEY)).toEqual([]);
+  });
+
+  it("installs a project skill only into .agents/skills inside an agent it does not know", async () => {
+    const box = sandbox({ AI_AGENT: "v0" }, false);
+    mkdirSync(join(box.home, ".claude"));
+    mkdirSync(join(box.home, ".openclaw"));
+    const ui = fakeUi();
+    expect(await runAdd(url, options({ skills: ["demo-skill"] }), box.context(ui.ui))).toBe(0);
+    expect(readdirSync(box.cwd)).toEqual([".agents"]);
+    expect(existsSync(join(box.cwd, ".agents/skills/demo-skill/SKILL.md"))).toBe(true);
   });
 
   it("names Devin when it finds Devin's marker file", async () => {
@@ -156,7 +168,6 @@ describe("runAdd", () => {
     expect(ui.asked).toEqual(["skills", "agents", "scope", "confirm"]);
     expect(ui.requests[0].initial).toEqual(["claude-code", "opencode", "codex"]);
     expect(ui.requests[0].locked).toEqual([]);
-    expect(ui.requests[0].choices.some((agent) => agent.id === "eve")).toBe(false);
     expect(readlinkSync(join(box.cwd, ".claude/skills/other-skill"))).toBe("../../.agents/skills/other-skill");
     expect(ui.text()).toContain("✓ ./.agents/skills/other-skill");
   });
@@ -173,7 +184,7 @@ describe("runAdd", () => {
       "amp", "antigravity", "antigravity-cli", "cline", "codex", "cursor", "deepagents",
       "gemini-cli", "github-copilot", "kimi-code-cli", "opencode", "warp", "zed",
     ]);
-    expect(request.choices.some((agent) => agent.canonical || agent.id === "eve")).toBe(false);
+    expect(request.choices.some((agent) => agent.canonical)).toBe(false);
     expect(lstatSync(join(box.home, ".codeium/windsurf/skills/demo-skill")).isSymbolicLink()).toBe(true);
     expect(existsSync(join(box.home, ".agents/skills/demo-skill/SKILL.md"))).toBe(true);
     expect(existsSync(join(box.home, ".claude/skills/demo-skill"))).toBe(false);
@@ -295,8 +306,8 @@ describe("runAdd", () => {
   it("refuses a named agent that cannot install globally", async () => {
     const box = sandbox();
     await expect(
-      runAdd(url, options({ agents: ["eve"], global: true, yes: true, skills: ["demo-skill"] }), box.context(fakeUi().ui)),
-    ).rejects.toThrow(/Eve cannot install skills globally/);
+      runAdd(url, options({ agents: ["promptscript"], global: true, yes: true, skills: ["demo-skill"] }), box.context(fakeUi().ui)),
+    ).rejects.toThrow(/PromptScript cannot install skills globally/);
   });
 
   it("reports a missing index with the key masked", async () => {
@@ -313,11 +324,14 @@ describe("runAdd", () => {
     await expect(runAdd(url, options({ skills: ["nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow(
       "No skill named nope in this registry. Available: demo-skill, other-skill",
     );
+    await expect(runAdd(url, options({ skills: ["*", "nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow("No skill named nope");
   });
 
-  it("rejects an unknown agent id", async () => {
+  it("rejects an unknown agent id, even next to '*'", async () => {
     const box = sandbox();
     await expect(runAdd(url, options({ agents: ["nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow(/Invalid agents: nope/);
+    await expect(runAdd(url, options({ agents: ["*", "nope"], yes: true }), box.context(fakeUi().ui))).rejects.toThrow(/Invalid agents: nope/);
+    expect(readdirSync(box.cwd)).toEqual([]);
   });
 
   it("survives running the same install twice and reports only the copy it replaces", async () => {
@@ -364,19 +378,6 @@ describe("runAdd", () => {
     expect(await runAdd(url, options({ skills: ["demo-skill"] }), box.context(ui.ui))).toBe(0);
     expect(ui.text()).toContain(`outside the project: ./.claude/skills/demo-skill → ${join(outside, "demo-skill")}`);
     expect(lstatSync(join(outside, "demo-skill")).isSymbolicLink()).toBe(true);
-  });
-
-  it("gives Eve its own copy and says so", async () => {
-    const box = sandbox();
-    const ui = fakeUi();
-    expect(await runAdd(url, options({ skills: ["demo-skill"], agents: ["claude-code", "eve"], yes: true }), box.context(ui.ui))).toBe(0);
-    expect(ui.text()).toContain("./.agents/skills/demo-skill\n  symlink → Claude Code\n  copy → Eve");
-    expect(ui.text()).toContain("✓ ./.agents/skills/demo-skill\n  symlinked: Claude Code\n  copied: Eve");
-    expect(ui.text()).not.toContain("Symlinks failed");
-    expect(lstatSync(join(box.cwd, "agent/skills/demo-skill")).isDirectory()).toBe(true);
-    const again = fakeUi();
-    expect(await runAdd(url, options({ skills: ["demo-skill"], agents: ["claude-code", "eve"], yes: true }), box.context(again.ui))).toBe(0);
-    expect(again.text()).toContain("overwrites: ./.agents/skills/demo-skill, ./agent/skills/demo-skill\n");
   });
 
   it("copies with --copy and says where", async () => {

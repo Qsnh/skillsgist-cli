@@ -1,14 +1,10 @@
 import * as clack from "@clack/prompts";
 import { CANCELLED, type AgentRequest, type Cancellable, type Ui } from "./add.js";
 import type { SkillEntry } from "./registry.js";
-import { printable, redact } from "./source.js";
+import { displayText as show } from "./source.js";
 
 function settle<T>(value: T | symbol): Cancellable<T> {
   return clack.isCancel(value) ? CANCELLED : (value as T);
-}
-
-function show(text: string): string {
-  return redact(printable(text));
 }
 
 function hint(text: string): string {

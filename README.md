@@ -15,7 +15,7 @@ npx skillsgist add https://skills.example.com/i/<install_key>
 - a bare `https://host/i/<key>` is looked up on `api.github.com`;
 - it prints the full URL.
 
-`npx skillsgist add` installs into the same directories for the same agents, and:
+`npx skillsgist add` installs into the same agent directories, and:
 
 - writes nothing but the skill files and their symlinks: no lock file, no state, no cache;
 - talks to no host but the one in the URL, and never follows a redirect;
@@ -44,11 +44,11 @@ The URL is any address a skillsgist page shows:
 - `https://host/i/<key>` for every skill your key opens;
 - `https://host/i/<key>/.well-known/agent-skills/<skill>` for one skill.
 
-Each skill lands in `.agents/skills/<name>`, or in `~/.agents/skills/<name>` with `-g`. Agents that read another directory get a symlink to it. Eve, as with `npx skills`, gets its own copy in `agent/skills/<name>` instead, with the frontmatter of its `SKILL.md` cut to `description`, `license` and `metadata`.
+Each skill lands in `.agents/skills/<name>`, or in `~/.agents/skills/<name>` with `-g`. Agents that read another directory get a symlink to it.
 
-With `-y`, or inside an agent, a project install fails for an agent rather than write through a symlink that leads out of the project, or replace a folder in `skills/` or `data/skills/` (OpenClaw, AstrBot), where a project keeps its own skills. Eve's `agent/skills/<name>` is replaced either way, as `npx skills` does, even if the project put it there. Without `-y`, the summary shows what will be replaced before you confirm.
+With `-y`, or inside an agent, a project install fails for an agent rather than write through a symlink that leads out of the project, or replace a folder in `skills/` or `data/skills/` (OpenClaw, AstrBot), where a project keeps its own skills. Without `-y`, the summary shows what will be replaced before you confirm.
 
-Inside a coding agent (Claude Code, Codex, Cursor and others are detected from their environment), `-y` is implied and the agent is added to the targets. If `AI_AGENT` names an agent it does not know, `-y` is still implied, and the agents found on the machine are the targets instead. Cursor's terminal on its own does not count as an agent.
+Inside a coding agent (Claude Code, Codex, Cursor and others are detected from their environment), `-y` is implied and the agent is added to the targets. If `AI_AGENT` names an agent it does not know, `-y` is still implied, and the skill goes only into `.agents/skills`. Cursor's terminal on its own does not count as an agent.
 
 ## What can still see the key
 

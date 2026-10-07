@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { parseCommandLine, USAGE } from "../src/args.js";
+import { CliError } from "../src/errors.js";
 
 function add(...argv: string[]) {
   const command = parseCommandLine(argv);
   if (command.kind !== "add") throw new Error(`expected add, got ${command.kind}`);
+  return command;
+}
+
+function list(...argv: string[]) {
+  const command = parseCommandLine(argv);
+  if (command.kind !== "list") throw new Error(`expected list, got ${command.kind}`);
   return command;
 }
 
@@ -94,5 +101,76 @@ describe("parseCommandLine", () => {
     expect(addOptions).toContain("-g, --global");
     expect(addOptions).toContain("-l, --list");
     expect(shared.trim().split("\n").map((line) => line.trim().split(/ {2,}/)[0])).toEqual(["-h, --help", "-v, --version"]);
+  });
+
+  it.each(["list", "ls"])("accepts the %s command with defaults", (name) => {
+    expect(list(name).options).toEqual({ global: false, project: false, agents: null, json: false });
+  });
+
+  it("reads the flags for list", () => {
+    expect(list("list", "-g", "-p", "--json").options).toEqual({
+      global: true,
+      project: true,
+      agents: null,
+      json: true,
+    });
+    expect(list("list", "--global", "--project").options).toMatchObject({ global: true, project: true });
+  });
+
+  it("collects agent values for list up to the next option", () => {
+    expect(list("list", "-a", "claude-code", "codex", "-a", "cursor").options.agents).toEqual([
+      "claude-code",
+      "codex",
+      "cursor",
+    ]);
+    expect(list("list", "-a", "claude-code", "-g").options).toMatchObject({ agents: ["claude-code"], global: true });
+  });
+
+  it("needs a value after -a for list", () => {
+    expect(failure(() => parseCommandLine(["list", "-a"]))).toBe("-a needs at least one value");
+  });
+
+  it("shows help and the version for list", () => {
+    expect(parseCommandLine(["list", "-h"])).toEqual({ kind: "help" });
+    expect(parseCommandLine(["ls", "--version"])).toEqual({ kind: "version" });
+  });
+
+  it("rejects unknown options and unexpected arguments for list", () => {
+    expect(failure(() => parseCommandLine(["list", "--yes"]))).toBe("Unknown option for list: --yes");
+    expect(failure(() => parseCommandLine(["list", "foo"]))).toBe("Unexpected argument: foo");
+  });
+
+  it("marks list failures as CliErrors that show usage", () => {
+    expect.assertions(4);
+    try {
+      parseCommandLine(["list", "--yes"]);
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).showUsage).toBe(true);
+    }
+    try {
+      parseCommandLine(["list", "foo"]);
+    } catch (err) {
+      expect(err).toBeInstanceOf(CliError);
+      expect((err as CliError).showUsage).toBe(true);
+    }
+  });
+
+  it("documents the list command and lists list's options under list", () => {
+    expect(USAGE.split("\n").slice(0, 3)).toEqual([
+      "Usage: skillsgist add <url> [options]",
+      "       skillsgist list [options]",
+      "       skillsgist agents",
+    ]);
+    expect(USAGE).toContain("  list                    List installed skills (also: ls)");
+    expect(USAGE).toContain(
+      [
+        "Options for list:",
+        "  -g, --global            Only list skills in your home directory",
+        "  -p, --project           Only list skills in the current directory",
+        "  -a, --agent <ids...>    Only list skills installed for these agents ('*' for all)",
+        "      --json              Print the list as JSON",
+      ].join("\n"),
+    );
   });
 });

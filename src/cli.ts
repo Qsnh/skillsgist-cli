@@ -5,9 +5,16 @@ import { runAdd } from "./add.js";
 import { parseCommandLine, USAGE } from "./args.js";
 import { CliError } from "./errors.js";
 import { listAgents } from "./list-agents.js";
+import { listSkills } from "./list-skills.js";
 import { clackUi } from "./ui.js";
 
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
+
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EPIPE") throw err;
+  });
+}
 
 async function main(argv: string[]): Promise<number> {
   const ui = clackUi();
@@ -24,6 +31,13 @@ async function main(argv: string[]): Promise<number> {
     if (command.kind === "agents") {
       process.stdout.write(listAgents({ home: homedir(), cwd: process.cwd(), env: process.env }));
       return 0;
+    }
+    if (command.kind === "list") {
+      const { output, problems } = await listSkills({ home: homedir(), cwd: process.cwd(), env: process.env }, command.options);
+      process.stdout.write(output);
+      if (problems.length === 0) return 0;
+      ui.error(problems.join("\n"));
+      return 1;
     }
     return await runAdd(command.url, command.options, {
       ui,

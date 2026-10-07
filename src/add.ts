@@ -1,6 +1,7 @@
-import { detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
+import { agentsById, detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
 import { unpackSkill, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
+import { plural } from "./format.js";
 import {
   canonicalSkillDir,
   installSkill,
@@ -78,10 +79,6 @@ interface Selection {
 
 const unique = <T>(items: T[]): T[] => [...new Set(items)];
 
-function plural(count: number, word: string): string {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
-}
-
 function formatList(items: string[], max = 5): string {
   return items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
 }
@@ -96,44 +93,38 @@ function sharedNames(agents: Agent[]): string[] {
 }
 
 async function chooseSkills(all: SkillEntry[], options: AddOptions, yes: boolean, ui: Ui): Promise<Cancellable<SkillEntry[]>> {
-  if (options.skills?.includes("*")) return all;
   if (options.skills) {
-    const wanted = unique(options.skills.map((name) => name.toLowerCase()));
+    const wanted = unique(options.skills.filter((name) => name !== "*").map((name) => name.toLowerCase()));
     const missing = wanted.filter((name) => !all.some((skill) => skill.name === name));
     if (missing.length > 0) {
       throw new CliError(`No skill named ${missing.join(", ")} in this registry. Available: ${all.map((skill) => skill.name).join(", ")}`);
     }
-    return all.filter((skill) => wanted.includes(skill.name));
+    return options.skills.includes("*") ? all : all.filter((skill) => wanted.includes(skill.name));
   }
   if (all.length === 1 || yes) return all;
   return ui.selectSkills(all);
 }
 
 async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, running: RunningAgent, ui: Ui): Promise<Cancellable<Selection>> {
-  const byId = new Map(agents.map((agent) => [agent.id, agent]));
-  const pick = (ids: string[]) => unique(ids).map((id) => byId.get(id) as Agent);
+  const pick = (ids: string[]) => agentsById(agents, ids);
   const universal = agents.filter((agent) => agent.universal);
   const select = (picked: Agent[], extra: Agent[] = []): Selection => {
     const implied = extra.filter((agent) => !picked.includes(agent));
     return { agents: [...picked, ...implied], implied: new Set(implied) };
   };
-  if (options.agents?.includes("*")) return select([], agents);
   if (options.agents) {
-    const invalid = options.agents.filter((id) => !byId.has(id));
-    if (invalid.length > 0) {
-      throw new CliError(`Invalid agents: ${invalid.join(", ")}. Valid agents: ${agents.map((agent) => agent.id).join(", ")}`);
-    }
-    return select(pick(options.agents));
+    const named = pick(options.agents.filter((id) => id !== "*"));
+    return options.agents.includes("*") ? select([], agents) : select(named);
   }
+  if (running.inAgent) return select(running.id === null ? [] : pick([running.id]), universal);
   const installed = agents.filter((agent) => agent.installed);
-  if (running.inAgent) return select(running.id === null ? installed : pick([running.id]), universal);
   if (installed.length === 0) {
     if (yes) return select([], universal);
-    const chosen = await ui.selectAgents({ choices: agents.filter((agent) => agent.pickable), initial: DEFAULT_AGENTS, locked: [] });
+    const chosen = await ui.selectAgents({ choices: agents, initial: DEFAULT_AGENTS, locked: [] });
     return chosen === CANCELLED ? CANCELLED : select(pick(chosen));
   }
   if (installed.length === 1 || yes) return select(installed, universal);
-  const choices = agents.filter((agent) => !agent.canonical && agent.pickable);
+  const choices = agents.filter((agent) => !agent.canonical);
   const chosen = await ui.selectAgents({
     choices,
     initial: installed.filter((agent) => choices.includes(agent)).map((agent) => agent.id),
@@ -164,8 +155,7 @@ async function summary(skills: SkillEntry[], targets: Agent[], install: InstallO
   const names = (agents: Agent[]) => formatList(agents.map((agent) => agent.displayName));
   const everyone = names(targets);
   const shared = formatList(sharedNames(targets));
-  const linked = names(targets.filter((agent) => !agent.canonical && !agent.ownCopy));
-  const copied = names(targets.filter((agent) => agent.ownCopy));
+  const linked = names(targets.filter((agent) => !agent.canonical));
   const blocks = await Promise.all(
     skills.map(async (skill) => {
       const lines: string[] = [];
@@ -176,7 +166,6 @@ async function summary(skills: SkillEntry[], targets: Agent[], install: InstallO
         lines.push(short(canonicalSkillDir(skill.name, install)));
         if (shared !== "") lines.push(`  universal: ${shared}`);
         if (linked !== "") lines.push(`  symlink → ${linked}`);
-        if (copied !== "") lines.push(`  copy → ${copied}`);
       }
       const [replaced, outside] = await Promise.all([
         replacedDirs(skill.name, targets, install, where),
@@ -238,12 +227,12 @@ function report(results: SkillResult[], install: InstallOptions, ui: Ui): void {
     lines.push(`✓ ${shortPath(result.canonicalPath, install.home, install.cwd)}`);
     const shared = sharedNames(done.filter((agent) => agent.status === "canonical").map((agent) => agent.agent));
     const linked = done.filter((agent) => agent.status === "symlinked").map((agent) => agent.agent.displayName);
-    const copied = done.filter((agent) => agent.status === "copied").map((agent) => agent.agent);
+    const copied = done.filter((agent) => agent.status === "copied").map((agent) => agent.agent.displayName);
     if (shared.length > 0) lines.push(`  universal: ${formatList(shared)}`);
     if (linked.length > 0) lines.push(`  symlinked: ${formatList(linked)}`);
     if (copied.length > 0) {
-      lines.push(`  copied: ${formatList(copied.map((agent) => agent.displayName))}`);
-      fallbacks.push(...copied.filter((agent) => !agent.ownCopy).map((agent) => agent.displayName));
+      lines.push(`  copied: ${formatList(copied)}`);
+      fallbacks.push(...copied);
     }
   }
   if (installed > 0) ui.note(lines.join("\n"), `Installed ${plural(installed, "skill")}`);

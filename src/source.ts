@@ -23,10 +23,22 @@ export function printable(text: string): string {
   return text.replace(UNPRINTABLE, (char) => (char === "\n" || char === "\t" ? char : ""));
 }
 
+export function oneLine(text: string): string {
+  return printable(text).replace(/[\n\t]/g, " ");
+}
+
 export function redact(text: string): string {
   let out = text;
   for (const key of knownKeys) out = out.split(key).join(maskKey(key));
   return out.replace(ANY_KEY_SEGMENT, (match, prefix: string, segment: string) => (segment.endsWith("…") ? match : `${prefix}${maskKey(segment)}`));
+}
+
+export function displayText(text: string): string {
+  return redact(printable(text));
+}
+
+export function displayLine(text: string): string {
+  return redact(oneLine(text));
 }
 
 function decoded(segment: string): string {

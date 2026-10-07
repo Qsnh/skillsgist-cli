@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { CliError } from "./errors.js";
 
 export const CANONICAL_SKILLS_DIR = ".agents/skills";
 
@@ -24,11 +25,10 @@ interface AgentDef {
   skillsDir: string;
   globalDir: (p: AgentPaths, exists: Exists) => string | null;
   detect: (p: AgentPaths, exists: Exists) => boolean;
+  detectInProject?: (p: AgentPaths, exists: Exists) => boolean;
   hiddenInPrompt?: boolean;
   unlisted?: boolean;
-  pickable?: boolean;
   projectOwned?: boolean;
-  ownCopy?: boolean;
 }
 
 export interface Agent {
@@ -39,10 +39,9 @@ export interface Agent {
   canonical: boolean;
   universal: boolean;
   hidden: boolean;
-  pickable: boolean;
   projectOwned: boolean;
-  ownCopy: boolean;
   installed: boolean;
+  detectedInProject: boolean;
 }
 
 export interface AgentEnvironment {
@@ -64,18 +63,6 @@ export interface Scope {
   cwd: string;
 }
 
-function hasDependency(packageJsonPath: string, name: string): boolean {
-  try {
-    const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-    return Boolean(pkg.dependencies?.[name] || pkg.devDependencies?.[name]);
-  } catch {
-    return false;
-  }
-}
-
 function openClawGlobalDir(p: AgentPaths, exists: Exists): string {
   for (const dir of [".openclaw", ".clawdbot", ".moltbot"]) {
     if (exists(join(p.home, dir))) return join(p.home, dir, "skills");
@@ -88,7 +75,7 @@ const AGENTS: AgentDef[] = [
   { id: "amp", displayName: "Amp", skillsDir: ".agents/skills", globalDir: (p) => join(p.config, "agents/skills"), detect: (p, exists) => exists(join(p.config, "amp")) },
   { id: "antigravity", displayName: "Antigravity", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/antigravity/skills"), detect: (p, exists) => exists(join(p.home, ".gemini/antigravity")) },
   { id: "antigravity-cli", displayName: "Antigravity CLI", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/antigravity-cli/skills"), detect: (p, exists) => exists(join(p.home, ".gemini/antigravity-cli")) },
-  { id: "astrbot", displayName: "AstrBot", skillsDir: "data/skills", globalDir: (p) => join(p.home, ".astrbot/data/skills"), detect: (p, exists) => exists(join(p.cwd, "data/skills")) || exists(join(p.home, ".astrbot")), projectOwned: true },
+  { id: "astrbot", displayName: "AstrBot", skillsDir: "data/skills", globalDir: (p) => join(p.home, ".astrbot/data/skills"), detect: (p, exists) => exists(join(p.home, ".astrbot")), detectInProject: (p, exists) => exists(join(p.cwd, ".astrbot")) || exists(join(p.cwd, "data/cmd_config.json")), projectOwned: true },
   { id: "autohand-code", displayName: "Autohand Code CLI", skillsDir: ".autohand/skills", globalDir: (p) => join(p.autohand, "skills"), detect: (p, exists) => exists(p.autohand) },
   { id: "augment", displayName: "Augment", skillsDir: ".augment/skills", globalDir: (p) => join(p.home, ".augment/skills"), detect: (p, exists) => exists(join(p.home, ".augment")) },
   { id: "bob", displayName: "IBM Bob", skillsDir: ".bob/skills", globalDir: (p) => join(p.home, ".bob/skills"), detect: (p, exists) => exists(join(p.home, ".bob")) },
@@ -109,7 +96,6 @@ const AGENTS: AgentDef[] = [
   { id: "devin", displayName: "Devin for Terminal", skillsDir: ".devin/skills", globalDir: (p) => join(p.config, "devin/skills"), detect: (p, exists) => exists(join(p.config, "devin")) },
   { id: "dexto", displayName: "Dexto", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".agents/skills"), detect: (p, exists) => exists(join(p.home, ".dexto")), hiddenInPrompt: true },
   { id: "droid", displayName: "Droid", skillsDir: ".factory/skills", globalDir: (p) => join(p.home, ".factory/skills"), detect: (p, exists) => exists(join(p.home, ".factory")) },
-  { id: "eve", displayName: "Eve", skillsDir: "agent/skills", globalDir: () => null, detect: (p, exists) => exists(join(p.cwd, "agent")) && hasDependency(join(p.cwd, "package.json"), "eve"), pickable: false, ownCopy: true },
   { id: "firebender", displayName: "Firebender", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".firebender/skills"), detect: (p, exists) => exists(join(p.home, ".firebender")), hiddenInPrompt: true },
   { id: "forgecode", displayName: "ForgeCode", skillsDir: ".forge/skills", globalDir: (p) => join(p.home, ".forge/skills"), detect: (p, exists) => exists(join(p.home, ".forge")) },
   { id: "gemini-cli", displayName: "Gemini CLI", skillsDir: ".agents/skills", globalDir: (p) => join(p.home, ".gemini/skills"), detect: (p, exists) => exists(join(p.home, ".gemini")) },
@@ -198,6 +184,7 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
   const paths = agentPaths(environment.home, environment.cwd, environment.env);
   return AGENTS.map((def) => {
     const canonical = def.skillsDir === CANONICAL_SKILLS_DIR;
+    const detectedInProject = def.detectInProject?.(paths, exists) ?? false;
     return {
       id: def.id,
       displayName: def.displayName,
@@ -206,12 +193,21 @@ export function loadAgents(environment: AgentEnvironment): Agent[] {
       canonical,
       universal: canonical && def.unlisted !== true,
       hidden: def.hiddenInPrompt === true,
-      pickable: def.pickable !== false,
       projectOwned: def.projectOwned === true,
-      ownCopy: def.ownCopy === true,
-      installed: def.detect(paths, exists),
+      installed: detectedInProject || def.detect(paths, exists),
+      detectedInProject,
     };
   });
+}
+
+export function agentsById(agents: Agent[], ids: string[]): Agent[] {
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  const unique = [...new Set(ids)];
+  const invalid = unique.filter((id) => !byId.has(id));
+  if (invalid.length > 0) {
+    throw new CliError(`Invalid agents: ${invalid.join(", ")}. Valid agents: ${agents.map((agent) => agent.id).join(", ")}`);
+  }
+  return unique.map((id) => byId.get(id) as Agent);
 }
 
 export function canonicalSkillsRoot(scope: Scope): string {
