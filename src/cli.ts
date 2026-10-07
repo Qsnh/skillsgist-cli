@@ -6,6 +6,7 @@ import { parseCommandLine, USAGE } from "./args.js";
 import { CliError } from "./errors.js";
 import { listAgents } from "./list-agents.js";
 import { listSkills } from "./list-skills.js";
+import { runLogin, runLogout, runWhoami } from "./login.js";
 import { runRemove } from "./remove.js";
 import { clackUi } from "./ui.js";
 
@@ -43,6 +44,10 @@ async function main(argv: string[]): Promise<number> {
     if (command.kind === "remove") {
       return await runRemove(command.options, { ui, home: homedir(), cwd: process.cwd(), env: process.env, interactive: Boolean(process.stdin.isTTY) });
     }
+    const account = { ui, home: homedir(), cwd: process.cwd(), env: process.env, interactive: Boolean(process.stdin.isTTY) };
+    if (command.kind === "login") return await runLogin(command.url, command.options, account);
+    if (command.kind === "logout") return await runLogout(command.url, account);
+    if (command.kind === "whoami") return await runWhoami(command.url, account);
     return await runAdd(command.url, command.options, {
       ui,
       home: homedir(),

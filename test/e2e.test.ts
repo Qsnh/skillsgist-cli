@@ -1,10 +1,11 @@
 import { execFile, spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { cleanup, tempDir } from "./helpers/fs.js";
-import { publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
+import { cleanup, filesContaining, tempDir } from "./helpers/fs.js";
+import { installFakeAuth } from "./helpers/oauth.js";
+import { LOGIN_TOKEN, publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
 
 const CLI = resolve("dist/cli.js");
 const RECORDER = pathToFileURL(resolve("test/fixtures/record-connections.mjs")).href;
@@ -401,5 +402,36 @@ describe("skillsgist remove", () => {
     expect(result.output).toContain("Nothing was removed");
     expect(existsSync(join(box.cwd, "skills/own/SKILL.md"))).toBe(true);
     expect(sandboxSnapshot(box)).toEqual(before);
+  });
+});
+
+describe("signing in", () => {
+  it("signs in with a device code, shows the account, and signs out", async () => {
+    const box = sandbox();
+    const auth = installFakeAuth(registry, { projects: ["secret"] });
+    const login = await run(box, ["login", `${registry.origin}/p/secret`]);
+    expect(login.code).toBe(0);
+    expect(login.output).toContain(`${registry.origin}/device?code=BCDF-GHJK`);
+    expect(login.output).toContain("as alice (projects: secret)");
+    expect(auth.deviceRequests[0].get("scope")).toBe("project:secret");
+    const file = join(box.home, ".config/skillsgist/credentials.json");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(filesContaining(box.home, LOGIN_TOKEN)).toEqual([file]);
+
+    const who = await run(box, ["whoami"]);
+    expect(who.code).toBe(0);
+    expect(who.output).toContain(`${registry.origin}: alice via sign-in (projects: secret)`);
+
+    const logout = await run(box, ["logout"]);
+    expect(logout.code).toBe(0);
+    expect(auth.revoked).toEqual([LOGIN_TOKEN]);
+    expect(existsSync(file)).toBe(false);
+    for (const result of [login, who, logout]) expect(result.output).not.toContain(LOGIN_TOKEN);
+  });
+
+  it("needs a URL to sign in", async () => {
+    const result = await run(sandbox(), ["login"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Missing the registry URL");
   });
 });

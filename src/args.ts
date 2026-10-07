@@ -2,20 +2,33 @@ import type { AddOptions } from "./add.js";
 import { isAgentId } from "./agents.js";
 import { CliError } from "./errors.js";
 import type { ListOptions } from "./list-skills.js";
+import type { LoginOptions } from "./login.js";
 import type { RemoveOptions } from "./remove.js";
 
 export const USAGE = `Usage: skillsgist add <url> [options]
        skillsgist list [options]
        skillsgist remove [skills...] [options]
        skillsgist agents
+       skillsgist login <url> [--no-browser]
+       skillsgist logout [url]
+       skillsgist whoami [url]
 
-Install Agent Skills from a skillsgist registry. The URL and its install key are never stored.
+Install Agent Skills from a skillsgist registry. Private skills need a sign-in
+(skillsgist login) or an install key in SKILLSGIST_INSTALL_KEY; neither goes in the URL.
 
 Commands:
   add <url>               Install skills from the registry at <url> (also: a, install, i)
   list                    List installed skills (also: ls)
   remove [skills...]      Remove installed skills (also: rm, r)
   agents                  List the agents -a accepts and where add installs for each
+  login <url>             Sign in to a registry in your browser and choose its projects
+  logout [url]            Sign out of a registry and revoke this computer's sign-in
+  whoami [url]            Show who you are signed in as, and for which projects
+
+Environment:
+  SKILLSGIST_INSTALL_KEY  A project's install key, for CI and containers
+  SKILLSGIST_HOST         The registry the install key belongs to; it is sent nowhere else
+  SKILLSGIST_CONFIG_DIR   Where sign-ins are kept (default ~/.config/skillsgist)
 
 Options for add:
   -g, --global            Install into your home directory instead of the project
@@ -39,6 +52,9 @@ Options for remove:
   -y, --yes               Skip all prompts
       --all               Same as -s '*' -y
 
+Options for login:
+      --no-browser        Print the sign-in link without opening a browser
+
 Options:
   -h, --help              Show this help
   -v, --version           Show the version
@@ -50,7 +66,10 @@ export type Command =
   | { kind: "agents" }
   | { kind: "add"; url: string; options: AddOptions }
   | { kind: "list"; options: ListOptions }
-  | { kind: "remove"; options: RemoveOptions };
+  | { kind: "remove"; options: RemoveOptions }
+  | { kind: "login"; url: string; options: LoginOptions }
+  | { kind: "logout"; url: string | null }
+  | { kind: "whoami"; url: string | null };
 
 const ADD_COMMANDS = new Set(["add", "a", "install", "i"]);
 const LIST_COMMANDS = new Set(["list", "ls"]);
@@ -159,6 +178,33 @@ function parseRemove(rest: string[]): Command {
   return { kind: "remove", options };
 }
 
+function parseLogin(rest: string[]): Command {
+  const options: LoginOptions = { browser: true };
+  let url: string | null = null;
+  for (const arg of rest) {
+    const early = helpOrVersion(arg);
+    if (early !== null) return early;
+    if (arg === "--no-browser") options.browser = false;
+    else if (arg.startsWith("-")) throw new CliError(`Unknown option for login: ${arg}`, { showUsage: true });
+    else if (url !== null) throw new CliError("Only one URL can be given", { showUsage: true });
+    else url = arg;
+  }
+  if (url === null) throw new CliError("Missing the registry URL", { showUsage: true });
+  return { kind: "login", url, options };
+}
+
+function parseAccount(kind: "logout" | "whoami", rest: string[]): Command {
+  let url: string | null = null;
+  for (const arg of rest) {
+    const early = helpOrVersion(arg);
+    if (early !== null) return early;
+    if (arg.startsWith("-")) throw new CliError(`Unknown option for ${kind}: ${arg}`, { showUsage: true });
+    if (url !== null) throw new CliError("Only one URL can be given", { showUsage: true });
+    url = arg;
+  }
+  return { kind, url };
+}
+
 export function parseCommandLine(argv: string[]): Command {
   const [command, ...rest] = argv;
   if (command === undefined) return { kind: "help" };
@@ -167,6 +213,8 @@ export function parseCommandLine(argv: string[]): Command {
   if (command === "agents") return parseAgents(rest);
   if (LIST_COMMANDS.has(command)) return parseList(rest);
   if (REMOVE_COMMANDS.has(command)) return parseRemove(rest);
+  if (command === "login") return parseLogin(rest);
+  if (command === "logout" || command === "whoami") return parseAccount(command, rest);
   if (!ADD_COMMANDS.has(command)) throw new CliError(`Unknown command: ${command}`, { showUsage: true });
   const options: AddOptions = { global: false, agents: null, skills: null, yes: false, copy: false, list: false };
   let url: string | null = null;

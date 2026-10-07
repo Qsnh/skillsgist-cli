@@ -257,4 +257,36 @@ describe("parseCommandLine", () => {
       ].join("\n"),
     );
   });
+
+  it("reads login with its URL and --no-browser", () => {
+    expect(parseCommandLine(["login", "https://h.example/p/team"])).toEqual({ kind: "login", url: "https://h.example/p/team", options: { browser: true } });
+    expect(parseCommandLine(["login", "--no-browser", "https://h.example"])).toEqual({ kind: "login", url: "https://h.example", options: { browser: false } });
+    expect(failure(() => parseCommandLine(["login"]))).toBe("Missing the registry URL");
+    expect(failure(() => parseCommandLine(["login", "https://a.example", "https://b.example"]))).toBe("Only one URL can be given");
+    expect(failure(() => parseCommandLine(["login", "https://a.example", "-y"]))).toBe("Unknown option for login: -y");
+    expect(parseCommandLine(["login", "-h"])).toEqual({ kind: "help" });
+  });
+
+  it.each(["logout", "whoami"] as const)("reads %s with an optional URL", (kind) => {
+    expect(parseCommandLine([kind])).toEqual({ kind, url: null });
+    expect(parseCommandLine([kind, "https://h.example"])).toEqual({ kind, url: "https://h.example" });
+    expect(failure(() => parseCommandLine([kind, "https://a.example", "https://b.example"]))).toBe("Only one URL can be given");
+    expect(failure(() => parseCommandLine([kind, "--all"]))).toBe(`Unknown option for ${kind}: --all`);
+  });
+
+  it("documents login, logout, whoami and the environment", () => {
+    expect(USAGE.split("\n").slice(0, 7)).toEqual([
+      "Usage: skillsgist add <url> [options]",
+      "       skillsgist list [options]",
+      "       skillsgist remove [skills...] [options]",
+      "       skillsgist agents",
+      "       skillsgist login <url> [--no-browser]",
+      "       skillsgist logout [url]",
+      "       skillsgist whoami [url]",
+    ]);
+    expect(USAGE).toContain("  login <url>             Sign in to a registry in your browser and choose its projects");
+    expect(USAGE).toContain("  SKILLSGIST_HOST         The registry the install key belongs to; it is sent nowhere else");
+    expect(USAGE).toContain(["Options for login:", "      --no-browser        Print the sign-in link without opening a browser"].join("\n"));
+    expect(USAGE).not.toMatch(/never stored/);
+  });
 });
