@@ -44,14 +44,23 @@ describe("resolveCredential", () => {
   });
 
   it.each([
-    [{ SKILLSGIST_HOST: "https://skills.example.com:8443" }, "SKILLSGIST_HOST is https://skills.example.com:8443, not https://skills.example.com"],
-    [{ SKILLSGIST_HOST: "https://evil.example" }, "SKILLSGIST_HOST is https://evil.example, not https://skills.example.com"],
-    [{ SKILLSGIST_HOST: "http://skills.example.com" }, "SKILLSGIST_HOST (http://skills.example.com) is not an https address"],
+    [{ SKILLSGIST_HOST: "https://skills.example.com:8443" }, `SKILLSGIST_HOST does not name ${ORIGIN}`],
+    [{ SKILLSGIST_HOST: "https://evil.example" }, `SKILLSGIST_HOST does not name ${ORIGIN}`],
+    [{ SKILLSGIST_HOST: "http://skills.example.com" }, "SKILLSGIST_HOST is not an https address"],
     [{}, "SKILLSGIST_HOST is not set, so the install key is not bound to any registry"],
   ])("does not send the install key with %j", (env, why) => {
     const { context, warnings } = setup({ SKILLSGIST_INSTALL_KEY: INSTALL_KEY, ...env });
     expect(resolveCredential(ORIGIN, context)).toEqual({ kind: "none" });
     expect(warnings).toEqual([`${why}; not sending SKILLSGIST_INSTALL_KEY`]);
+  });
+
+  it("warns without leaking either variable when SKILLSGIST_HOST and SKILLSGIST_INSTALL_KEY are swapped", () => {
+    const { context, warnings } = setup({ SKILLSGIST_INSTALL_KEY: "https://skills.example.com", SKILLSGIST_HOST: "sgi_0123456789abcdef" });
+    expect(resolveCredential(ORIGIN, context)).toEqual({ kind: "none" });
+    expect(warnings).toEqual([
+      "SKILLSGIST_INSTALL_KEY holds an address, not an install key (are SKILLSGIST_HOST and SKILLSGIST_INSTALL_KEY swapped?); not sending SKILLSGIST_INSTALL_KEY",
+    ]);
+    expect(redact("https://skills.example.com")).toBe("https://skills.example.com");
   });
 
   it.each([

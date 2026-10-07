@@ -22,19 +22,22 @@ export function hostOrigin(value: string): string | null {
 export function envCredential(origin: string, context: ConfigContext): Credential {
   const key = context.env.SKILLSGIST_INSTALL_KEY?.trim() ?? "";
   if (key === "") return { kind: "none" };
-  registerSecret(key);
   const skip = (why: string): Credential => {
     context.warn?.(`${why}; not sending SKILLSGIST_INSTALL_KEY`);
     return { kind: "none" };
   };
+  if (key.includes("://")) {
+    return skip("SKILLSGIST_INSTALL_KEY holds an address, not an install key (are SKILLSGIST_HOST and SKILLSGIST_INSTALL_KEY swapped?)");
+  }
+  registerSecret(key);
   if (key.startsWith("sgt_")) return skip("SKILLSGIST_INSTALL_KEY holds a publish API token, not an install key");
   if (key.startsWith("sgd_")) return skip("SKILLSGIST_INSTALL_KEY holds a sign-in token, not an install key (use skillsgist login instead)");
   if (!HEADER_SAFE.test(key)) return skip("SKILLSGIST_INSTALL_KEY has spaces or characters a header cannot carry");
   const host = context.env.SKILLSGIST_HOST?.trim() ?? "";
   if (host === "") return skip("SKILLSGIST_HOST is not set, so the install key is not bound to any registry");
   const bound = hostOrigin(host);
-  if (bound === null) return skip(`SKILLSGIST_HOST (${host}) is not an https address`);
-  if (bound !== origin) return skip(`SKILLSGIST_HOST is ${bound}, not ${origin}`);
+  if (bound === null) return skip("SKILLSGIST_HOST is not an https address");
+  if (bound !== origin) return skip(`SKILLSGIST_HOST does not name ${origin}`);
   return { kind: "env", token: key };
 }
 

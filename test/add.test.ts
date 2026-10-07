@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSy
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { CANCELLED, runAdd, type AddContext, type AddOptions, type AgentRequest, type Ui } from "../src/add.js";
-import { saveLogin } from "../src/credentials.js";
+import { getLogin, saveLogin } from "../src/credentials.js";
 import type { SkillEntry } from "../src/registry.js";
 import { cleanup, filesContaining, sandboxExists, tempDir } from "./helpers/fs.js";
 import { installFakeAuth } from "./helpers/oauth.js";
@@ -447,7 +447,7 @@ describe("runAdd with credentials", () => {
     await expect(runAdd(secret(), options({ yes: true }), box.context(ui.ui))).rejects.toThrow(
       `No skills found at ${secret()}. If they are private, sign in first (npx skillsgist login ${secret()})`,
     );
-    expect(ui.text()).toContain(`warn: SKILLSGIST_HOST is https://elsewhere.example, not ${registry.origin}; not sending SKILLSGIST_INSTALL_KEY`);
+    expect(ui.text()).toContain(`warn: SKILLSGIST_HOST does not name ${registry.origin}; not sending SKILLSGIST_INSTALL_KEY`);
     expect(sentAuth("/p/secret").every((value) => value === undefined)).toBe(true);
   });
 
@@ -499,7 +499,7 @@ describe("runAdd with credentials", () => {
     });
     const box = sandbox({ SKILLSGIST_INSTALL_KEY: INSTALL_KEY, SKILLSGIST_HOST: registry.origin });
     await expect(runAdd(`${registry.origin}/p/locked`, options({ yes: true }), box.context(fakeUi().ui))).rejects.toThrow(
-      "SKILLSGIST_INSTALL_KEY is for project other, not locked",
+      "SKILLSGIST_INSTALL_KEY is for project other, not locked. Use the install key of project locked, or unset SKILLSGIST_INSTALL_KEY to use your sign-in",
     );
   });
 
@@ -513,6 +513,48 @@ describe("runAdd with credentials", () => {
     signedIn(box.home);
     await expect(runAdd(`${registry.origin}/p/locked`, options({ yes: true }), box.context(fakeUi().ui))).rejects.toThrow(
       `Your sign-in to ${host()} does not cover project locked. Run: npx skillsgist login ${registry.origin}/p/locked`,
+    );
+  });
+
+  it("signs in again after an expired sign-in, in a terminal, and installs", async () => {
+    installFakeAuth(registry, { projects: ["secret"] });
+    const box = sandbox();
+    signedIn(box.home, "sgd_revoked0000000000");
+    const ui = fakeUi({ confirm: true, agents: ["claude-code"], scope: false });
+    const context = { ...box.context(ui.ui), fetch: { sleep: async () => undefined }, openBrowser: () => undefined, hostname: "laptop" };
+    expect(await runAdd(secret(), options(), context)).toBe(0);
+    expect(ui.asked[0]).toBe("confirm");
+    expect(existsSync(join(box.cwd, ".agents/skills/secret-skill/SKILL.md"))).toBe(true);
+    expect(getLogin({ home: box.home, env: {} }, registry.origin)?.token).toBe(LOGIN_TOKEN);
+  });
+
+  it("does not ask again when a sign-in made again still does not cover the project", async () => {
+    registry.routes.set("/p/locked/.well-known/agent-skills/index.json", {
+      status: 403,
+      type: "application/json",
+      body: JSON.stringify({ error: "project_not_granted", project: "locked" }),
+    });
+    installFakeAuth(registry, { projects: ["secret"] });
+    const box = sandbox();
+    signedIn(box.home);
+    const ui = fakeUi({ confirm: true });
+    const context = { ...box.context(ui.ui), fetch: { sleep: async () => undefined }, openBrowser: () => undefined, hostname: "laptop" };
+    await expect(runAdd(`${registry.origin}/p/locked`, options(), context)).rejects.toThrow("does not cover project locked");
+    expect(ui.asked.filter((q) => q === "confirm")).toHaveLength(1);
+  });
+
+  it("rejects an install key in a terminal without asking anything", async () => {
+    const box = sandbox({ SKILLSGIST_INSTALL_KEY: "sgi_reset000000000000", SKILLSGIST_HOST: registry.origin });
+    const ui = fakeUi();
+    await expect(runAdd(secret(), options(), box.context(ui.ui))).rejects.toThrow("SKILLSGIST_INSTALL_KEY was rejected by");
+    expect(ui.asked).toEqual([]);
+  });
+
+  it("hints at signing in when an unknown skill name might be private", async () => {
+    const box = sandbox();
+    const ui = fakeUi();
+    await expect(runAdd(url, options({ yes: true, skills: ["nope"] }), box.context(ui.ui))).rejects.toThrow(
+      `Private skills need a sign-in: npx skillsgist login ${url}`,
     );
   });
 
