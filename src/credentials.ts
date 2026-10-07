@@ -59,6 +59,7 @@ function isLogin(value: unknown): value is HostLogin {
     typeof login.user === "string" &&
     typeof login.token === "string" &&
     login.token !== "" &&
+    /^[\x21-\x7e]+$/.test(login.token) &&
     typeof login.createdAt === "string" &&
     Array.isArray(login.projects) &&
     login.projects.every((project) => typeof project === "string")

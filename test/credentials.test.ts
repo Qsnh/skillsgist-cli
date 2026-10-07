@@ -103,6 +103,11 @@ describe("sign-ins on disk", () => {
     ["a host that is not an origin", JSON.stringify({ version: 1, hosts: { "https://h.example/path": login() } }), "has an entry skillsgist cannot read"],
     ["__proto__ as a host", `{"version":1,"hosts":{"__proto__":${JSON.stringify(login())}}}`, "has an entry skillsgist cannot read"],
     ["a token that is not a string", JSON.stringify({ version: 1, hosts: { [ORIGIN]: { ...login(), token: 5 } } }), "has an entry skillsgist cannot read"],
+    [
+      "a token with a newline",
+      JSON.stringify({ version: 1, hosts: { [ORIGIN]: { ...login(), token: "sgd_bad\ntoken0000" } } }),
+      "has an entry skillsgist cannot read",
+    ],
   ])("refuses a file with %s without printing its contents", (_, text, problem) => {
     const { context, dir, file } = box();
     mkdirSync(dir, { recursive: true });
