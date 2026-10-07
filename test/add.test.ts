@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { CANCELLED, runAdd, type AddContext, type AddOptions, type AgentRequest, type Ui } from "../src/add.js";
 import type { SkillEntry } from "../src/registry.js";
-import { cleanup, filesContaining, sandboxExists, tempDir } from "./helpers/fs.js";
-import { KEY, publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
+import { cleanup, sandboxExists, tempDir } from "./helpers/fs.js";
+import { publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
 
 type Answer<T> = T | typeof CANCELLED;
 
@@ -65,11 +65,11 @@ let url: string;
 
 beforeAll(async () => {
   registry = await startRegistry();
-  publishIndex(registry, `/i/${KEY}`, [
+  publishIndex(registry, `/p/team`, [
     { name: "demo-skill", zip: skillZip("demo-skill", { "references/api.md": "api" }) },
     { name: "other-skill", zip: skillZip("other-skill") },
   ]);
-  url = `${registry.origin}/i/${KEY}`;
+  url = `${registry.origin}/p/team`;
 });
 
 afterAll(() => registry.close());
@@ -97,9 +97,7 @@ describe("runAdd", () => {
     expect(ui.text()).toContain("symlinked: Claude Code");
     expect(ui.text()).not.toContain("Failed");
     expect(ui.text()).not.toContain("Skipping");
-    expect(ui.text()).not.toContain(KEY);
     expect(readdirSync(box.cwd)).toEqual([]);
-    expect(filesContaining(box.home, KEY)).toEqual([]);
   });
 
   it("installs only into the universal directory inside an agent it does not know", async () => {
@@ -114,8 +112,6 @@ describe("runAdd", () => {
     expect(readdirSync(join(box.home, ".claude"))).toEqual([]);
     expect(readdirSync(join(box.home, ".roo"))).toEqual([]);
     expect(ui.text()).not.toContain("symlinked");
-    expect(ui.text()).not.toContain(KEY);
-    expect(filesContaining(box.home, KEY)).toEqual([]);
   });
 
   it("installs a project skill only into .agents/skills inside an agent it does not know", async () => {
@@ -312,10 +308,10 @@ describe("runAdd", () => {
     ).rejects.toThrow(/PromptScript cannot install skills globally/);
   });
 
-  it("reports a missing index with the key masked", async () => {
+  it("reports a missing index", async () => {
     const box = sandbox();
-    await expect(runAdd(`${registry.origin}/i/${"f".repeat(32)}`, options({ yes: true }), box.context(fakeUi().ui))).rejects.toThrow(
-      `No skills found at ${registry.origin}/i/ffff…`,
+    await expect(runAdd(`${registry.origin}/p/nobody`, options({ yes: true }), box.context(fakeUi().ui))).rejects.toThrow(
+      `No skills found at ${registry.origin}/p/nobody`,
     );
   });
 

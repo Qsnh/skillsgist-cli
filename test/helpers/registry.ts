@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { strToU8, zipSync } from "fflate";
 import { DISCOVERY_SCHEMA } from "../../src/registry.js";
 
-export const KEY = "0123456789abcdef0123456789abcdef";
+export const PROJECT = "team";
 
 export interface Route {
   status?: number;

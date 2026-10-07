@@ -3,8 +3,8 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync,
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { cleanup, filesContaining, tempDir } from "./helpers/fs.js";
-import { KEY, publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
+import { cleanup, tempDir } from "./helpers/fs.js";
+import { publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
 
 const CLI = resolve("dist/cli.js");
 const RECORDER = pathToFileURL(resolve("test/fixtures/record-connections.mjs")).href;
@@ -60,8 +60,8 @@ beforeAll(async () => {
   if (!existsSync(CLI)) throw new Error("dist/cli.js is missing: run npm run build first");
   registry = await startRegistry();
   const demo = { name: "demo-skill", zip: skillZip("demo-skill", { "references/api.md": "api", "scripts/run.sh": "echo run" }) };
-  publishIndex(registry, `/i/${KEY}`, [demo, { name: "other-skill", zip: skillZip("other-skill") }]);
-  publishIndex(registry, `/i/${KEY}/.well-known/agent-skills/demo-skill`, [demo]);
+  publishIndex(registry, `/p/team`, [demo, { name: "other-skill", zip: skillZip("other-skill") }]);
+  publishIndex(registry, `/p/team/.well-known/agent-skills/demo-skill`, [demo]);
 });
 
 afterAll(() => registry.close());
@@ -100,24 +100,21 @@ function run(box: Sandbox, args: string[], env: Record<string, string> = {}): Pr
 }
 
 function expectNoLeak(box: Sandbox, result: Result): void {
-  expect(result.output).not.toContain(KEY);
-  expect(filesContaining(box.home, KEY)).toEqual([]);
-  expect(filesContaining(box.cwd, KEY)).toEqual([]);
   const registryHost = new URL(registry.origin).host;
   expect(result.connections.filter((connection) => connection !== registryHost)).toEqual([]);
 }
 
 describe("skillsgist add", () => {
-  it("runs the skillsgist agent prompt inside Claude Code without leaving the key behind", async () => {
+  it("runs the skillsgist agent prompt inside Claude Code", async () => {
     const box = sandbox();
     const result = await run(
       box,
-      ["add", `${registry.origin}/i/${KEY}/.well-known/agent-skills/demo-skill`, "--skill", "demo-skill", "-g", "-y"],
+      ["add", `${registry.origin}/p/team/.well-known/agent-skills/demo-skill`, "--skill", "demo-skill", "-g", "-y"],
       { CLAUDECODE: "1", AI_AGENT: "claude-code_2-1-280_harness" },
     );
     expect(result.code).toBe(0);
     expect(result.output).toMatch(/✓ ~\/\.agents\/skills\/demo-skill\b/);
-    expect(result.output).toContain("/i/0123…");
+    expect(result.output).toContain("/p/team/.well-known/agent-skills/demo-skill");
     expect(existsSync(join(box.home, ".agents/skills/demo-skill/references/api.md"))).toBe(true);
     expect(lstatSync(join(box.home, ".claude/skills/demo-skill")).isSymbolicLink()).toBe(true);
     expect(readFileSync(join(box.home, ".claude/skills/demo-skill/SKILL.md"), "utf8")).toContain("name: demo-skill");
@@ -126,9 +123,9 @@ describe("skillsgist add", () => {
     expectNoLeak(box, result);
   });
 
-  it("installs every skill of a key into the project with -y", async () => {
+  it("installs every skill of a project with -y", async () => {
     const box = sandbox();
-    const result = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-y"]);
+    const result = await run(box, ["add", `${registry.origin}/p/team`, "-y"]);
     expect(result.code).toBe(0);
     expect(readdirSync(join(box.cwd, ".agents/skills")).sort()).toEqual(["demo-skill", "other-skill"]);
     expect(readdirSync(box.home)).toEqual([]);
@@ -137,7 +134,7 @@ describe("skillsgist add", () => {
 
   it("copies with --copy", async () => {
     const box = sandbox();
-    const result = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-s", "demo-skill", "-a", "claude-code", "--copy", "-y"]);
+    const result = await run(box, ["add", `${registry.origin}/p/team`, "-s", "demo-skill", "-a", "claude-code", "--copy", "-y"]);
     expect(result.code).toBe(0);
     expect(result.output).toContain("✓ demo-skill (copied)");
     expect(lstatSync(join(box.cwd, ".claude/skills/demo-skill")).isDirectory()).toBe(true);
@@ -146,7 +143,7 @@ describe("skillsgist add", () => {
 
   it("lists skills without writing anything", async () => {
     const box = sandbox();
-    const result = await run(box, ["add", `${registry.origin}/i/${KEY}`, "--list"]);
+    const result = await run(box, ["add", `${registry.origin}/p/team`, "--list"]);
     expect(result.code).toBe(0);
     expect(result.output).toContain("other-skill");
     expect(readdirSync(box.cwd)).toEqual([]);
@@ -180,7 +177,7 @@ describe("skillsgist add", () => {
 
   it("refuses plain http to a remote host before connecting anywhere", async () => {
     const box = sandbox();
-    const result = await run(box, ["add", `http://skills.example.com/i/${KEY}`, "-y"]);
+    const result = await run(box, ["add", `http://skills.example.com/p/team`, "-y"]);
     expect(result.code).toBe(1);
     expect(result.output).toMatch(/use https/);
     expect(result.connections).toEqual([]);
@@ -189,7 +186,7 @@ describe("skillsgist add", () => {
 
   it("prints the usage for an unknown option", async () => {
     const box = sandbox();
-    const result = await run(box, ["add", `${registry.origin}/i/${KEY}`, "--full-depth"]);
+    const result = await run(box, ["add", `${registry.origin}/p/team`, "--full-depth"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("Unknown option: --full-depth");
     expect(result.stderr).toContain("Usage: skillsgist add <url> [options]");
@@ -255,7 +252,7 @@ describe("skillsgist agents", () => {
 describe("skillsgist list", () => {
   it("lists what add just installed, without touching the network or the disk", async () => {
     const box = sandbox();
-    const added = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-y", "-a", "claude-code"]);
+    const added = await run(box, ["add", `${registry.origin}/p/team`, "-y", "-a", "claude-code"]);
     expect(added.code).toBe(0);
     const before = sandboxSnapshot(box);
     const result = await run(box, ["list"]);
@@ -266,13 +263,12 @@ describe("skillsgist list", () => {
     expect(result.output).toContain("other-skill");
     expect(result.connections).toEqual(added.connections);
     expect(result.output).not.toContain("\x1b");
-    expect(result.output).not.toContain(KEY);
     expect(sandboxSnapshot(box)).toEqual(before);
   });
 
   it("prints JSON of project skills on stdout alone", async () => {
     const box = sandbox();
-    const added = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-y", "-a", "claude-code"]);
+    const added = await run(box, ["add", `${registry.origin}/p/team`, "-y", "-a", "claude-code"]);
     expect(added.code).toBe(0);
     const result = await run(box, ["ls", "--json", "-p"]);
     expect(result.code).toBe(0);
@@ -337,7 +333,7 @@ describe("skillsgist remove", () => {
   const present = (path: string) => lstatSync(path, { throwIfNoEntry: false }) !== undefined;
 
   async function installed(box: Sandbox): Promise<Result> {
-    const added = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-y", "-a", "claude-code"]);
+    const added = await run(box, ["add", `${registry.origin}/p/team`, "-y", "-a", "claude-code"]);
     expect(added.code).toBe(0);
     return added;
   }
@@ -353,7 +349,6 @@ describe("skillsgist remove", () => {
     const listed = await run(box, ["list", "-p", "--json"]);
     expect((JSON.parse(listed.stdout) as Array<{ name: string }>).map((row) => row.name)).toEqual(["other-skill"]);
     expect(result.connections).toEqual(added.connections);
-    expect(result.output).not.toContain(KEY);
     expect(result.output).not.toContain("\x1b");
   });
 

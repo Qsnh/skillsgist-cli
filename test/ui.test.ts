@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SkillEntry } from "../src/registry.js";
-import { parseSource } from "../src/source.js";
+import { registerSecret } from "../src/source.js";
 
 const multiselect = vi.hoisted(() => vi.fn());
 const message = vi.hoisted(() => vi.fn());
@@ -66,7 +66,7 @@ describe("clackUi", () => {
   });
 
   it("masks a key that a control character split in two", () => {
-    parseSource(`https://h.example/i/${KEY}`);
+    registerSecret(KEY);
     clackUi().message(`boom ${KEY.slice(0, 10)}\x1b${KEY.slice(10)} boom`);
     expect(message).toHaveBeenLastCalledWith("boom 0123… boom");
   });
