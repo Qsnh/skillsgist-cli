@@ -14,6 +14,12 @@ function list(...argv: string[]) {
   return command;
 }
 
+function remove(...argv: string[]) {
+  const command = parseCommandLine(argv);
+  if (command.kind !== "remove") throw new Error(`expected remove, got ${command.kind}`);
+  return command;
+}
+
 function failure(action: () => unknown): string {
   try {
     action();
@@ -72,7 +78,7 @@ describe("parseCommandLine", () => {
   });
 
   it("rejects unknown commands and options", () => {
-    expect(failure(() => parseCommandLine(["remove", "x"]))).toBe("Unknown command: remove");
+    expect(failure(() => parseCommandLine(["wipe", "x"]))).toBe("Unknown command: wipe");
     expect(failure(() => parseCommandLine(["add", "https://h.example", "--full-depth"]))).toBe("Unknown option: --full-depth");
   });
 
@@ -157,9 +163,10 @@ describe("parseCommandLine", () => {
   });
 
   it("documents the list command and lists list's options under list", () => {
-    expect(USAGE.split("\n").slice(0, 3)).toEqual([
+    expect(USAGE.split("\n").slice(0, 4)).toEqual([
       "Usage: skillsgist add <url> [options]",
       "       skillsgist list [options]",
+      "       skillsgist remove [skills...] [options]",
       "       skillsgist agents",
     ]);
     expect(USAGE).toContain("  list                    List installed skills (also: ls)");
@@ -170,6 +177,73 @@ describe("parseCommandLine", () => {
         "  -p, --project           Only list skills in the current directory",
         "  -a, --agent <ids...>    Only list skills installed for these agents ('*' for all)",
         "      --json              Print the list as JSON",
+      ].join("\n"),
+    );
+  });
+
+  it.each(["remove", "rm", "r"])("accepts the %s command with defaults", (name) => {
+    expect(remove(name).options).toEqual({ global: false, agents: null, skills: [], all: false, yes: false });
+  });
+
+  it("reads the flags for remove", () => {
+    expect(remove("rm", "demo-skill", "other", "-g", "-y").options).toEqual({
+      global: true,
+      agents: null,
+      skills: ["demo-skill", "other"],
+      all: false,
+      yes: true,
+    });
+    const { options } = remove("remove", "a", "-s", "b", "c", "-a", "claude-code", "codex", "-s", "d");
+    expect(options.skills).toEqual(["a", "b", "c", "d"]);
+    expect(options.agents).toEqual(["claude-code", "codex"]);
+  });
+
+  it("expands --all and '*' for remove", () => {
+    expect(remove("remove", "--all").options).toEqual({ global: false, agents: null, skills: [], all: true, yes: true });
+    expect(remove("remove", "*").options).toMatchObject({ all: true, yes: false, skills: [] });
+    expect(remove("remove", "-s", "*").options).toMatchObject({ all: true, yes: false, skills: [] });
+  });
+
+  it("rejects combining --all or '*' with skill names for remove", () => {
+    expect(failure(() => parseCommandLine(["remove", "--all", "demo-skill"]))).toBe("Cannot combine --all or '*' with skill names");
+    expect(failure(() => parseCommandLine(["remove", "*", "demo-skill"]))).toBe("Cannot combine --all or '*' with skill names");
+    expect(failure(() => parseCommandLine(["remove", "-a"]))).toBe("-a needs at least one value");
+    expect(failure(() => parseCommandLine(["remove", "--copy"]))).toBe("Unknown option for remove: --copy");
+  });
+
+  it("marks remove failures as CliErrors that show usage", () => {
+    const cases = [
+      ["remove", "--all", "demo-skill"],
+      ["remove", "*", "demo-skill"],
+      ["remove", "-a"],
+      ["remove", "--copy"],
+    ];
+    expect.assertions(cases.length * 2);
+    for (const argv of cases) {
+      try {
+        parseCommandLine(argv);
+      } catch (err) {
+        expect(err).toBeInstanceOf(CliError);
+        expect((err as CliError).showUsage).toBe(true);
+      }
+    }
+  });
+
+  it("shows help and the version for remove", () => {
+    expect(parseCommandLine(["remove", "-h"])).toEqual({ kind: "help" });
+    expect(parseCommandLine(["rm", "--version"])).toEqual({ kind: "version" });
+  });
+
+  it("documents the remove command and lists remove's options under remove", () => {
+    expect(USAGE).toContain("  remove [skills...]      Remove installed skills (also: rm, r)");
+    expect(USAGE).toContain(
+      [
+        "Options for remove:",
+        "  -g, --global            Remove from your home directory instead of the project",
+        "  -a, --agent <ids...>    Only remove from these agents' directories ('*' for all)",
+        "  -s, --skill <names...>  Skills to remove ('*' for all)",
+        "  -y, --yes               Skip all prompts",
+        "      --all               Same as -s '*' -y",
       ].join("\n"),
     );
   });

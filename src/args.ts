@@ -1,9 +1,11 @@
 import type { AddOptions } from "./add.js";
 import { CliError } from "./errors.js";
 import type { ListOptions } from "./list-skills.js";
+import type { RemoveOptions } from "./remove.js";
 
 export const USAGE = `Usage: skillsgist add <url> [options]
        skillsgist list [options]
+       skillsgist remove [skills...] [options]
        skillsgist agents
 
 Install Agent Skills from a skillsgist registry. The URL and its install key are never stored.
@@ -11,6 +13,7 @@ Install Agent Skills from a skillsgist registry. The URL and its install key are
 Commands:
   add <url>               Install skills from the registry at <url> (also: a, install, i)
   list                    List installed skills (also: ls)
+  remove [skills...]      Remove installed skills (also: rm, r)
   agents                  List the agents -a accepts and where add installs for each
 
 Options for add:
@@ -28,6 +31,13 @@ Options for list:
   -a, --agent <ids...>    Only list skills installed for these agents ('*' for all)
       --json              Print the list as JSON
 
+Options for remove:
+  -g, --global            Remove from your home directory instead of the project
+  -a, --agent <ids...>    Only remove from these agents' directories ('*' for all)
+  -s, --skill <names...>  Skills to remove ('*' for all)
+  -y, --yes               Skip all prompts
+      --all               Same as -s '*' -y
+
 Options:
   -h, --help              Show this help
   -v, --version           Show the version
@@ -38,10 +48,12 @@ export type Command =
   | { kind: "version" }
   | { kind: "agents" }
   | { kind: "add"; url: string; options: AddOptions }
-  | { kind: "list"; options: ListOptions };
+  | { kind: "list"; options: ListOptions }
+  | { kind: "remove"; options: RemoveOptions };
 
 const ADD_COMMANDS = new Set(["add", "a", "install", "i"]);
 const LIST_COMMANDS = new Set(["list", "ls"]);
+const REMOVE_COMMANDS = new Set(["remove", "rm", "r"]);
 const LOOKS_LIKE_URL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 function helpOrVersion(arg: string): Command | null {
@@ -99,6 +111,48 @@ function parseList(rest: string[]): Command {
   return { kind: "list", options };
 }
 
+function parseRemove(rest: string[]): Command {
+  const options: RemoveOptions = { global: false, agents: null, skills: [], all: false, yes: false };
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    const early = helpOrVersion(arg);
+    if (early !== null) return early;
+    switch (arg) {
+      case "-g":
+      case "--global":
+        options.global = true;
+        break;
+      case "-y":
+      case "--yes":
+        options.yes = true;
+        break;
+      case "--all":
+        options.all = true;
+        options.yes = true;
+        break;
+      case "-a":
+      case "--agent":
+      case "-s":
+      case "--skill": {
+        const values = valuesAfter(rest, i);
+        i += values.length;
+        if (arg === "-a" || arg === "--agent") options.agents = [...(options.agents ?? []), ...values];
+        else options.skills.push(...values);
+        break;
+      }
+      default:
+        if (arg.startsWith("-")) throw new CliError(`Unknown option for remove: ${arg}`, { showUsage: true });
+        options.skills.push(arg);
+    }
+  }
+  if (options.skills.includes("*")) {
+    options.skills = options.skills.filter((name) => name !== "*");
+    options.all = true;
+  }
+  if (options.all && options.skills.length > 0) throw new CliError("Cannot combine --all or '*' with skill names", { showUsage: true });
+  return { kind: "remove", options };
+}
+
 export function parseCommandLine(argv: string[]): Command {
   const [command, ...rest] = argv;
   if (command === undefined) return { kind: "help" };
@@ -106,6 +160,7 @@ export function parseCommandLine(argv: string[]): Command {
   if (early !== null) return early;
   if (command === "agents") return parseAgents(rest);
   if (LIST_COMMANDS.has(command)) return parseList(rest);
+  if (REMOVE_COMMANDS.has(command)) return parseRemove(rest);
   if (!ADD_COMMANDS.has(command)) throw new CliError(`Unknown command: ${command}`, { showUsage: true });
   const options: AddOptions = { global: false, agents: null, skills: null, yes: false, copy: false, list: false };
   let url: string | null = null;

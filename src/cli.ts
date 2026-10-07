@@ -39,6 +39,7 @@ async function main(argv: string[]): Promise<number> {
       ui.error(problems.join("\n"));
       return 1;
     }
+    if (command.kind === "remove") throw new CliError("remove is not available yet");
     return await runAdd(command.url, command.options, {
       ui,
       home: homedir(),
