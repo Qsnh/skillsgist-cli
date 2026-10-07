@@ -1,10 +1,12 @@
 # skillsgist-cli
 
-Install Agent Skills from a [skillsgist](https://github.com/Qsnh/skillsgist) registry into Claude Code, Codex, Cursor and dozens of other coding agents, without storing the registry's install key anywhere.
+Install Agent Skills from a [skillsgist](https://github.com/Qsnh/skillsgist) registry into Claude Code, Codex, Cursor and dozens of other coding agents.
 
 ```bash
-npx skillsgist add https://skills.example.com/i/<install_key>
+npx skillsgist add https://skills.example.com/p/<project>
 ```
+
+Public skills install without an account. For a project's private skills, sign in once with `npx skillsgist login`, or give CI an install key in an environment variable. Neither ever goes in the URL.
 
 ## Usage
 
@@ -25,9 +27,8 @@ npx skillsgist add <url> [options]
 The URL is any address a skillsgist page shows:
 
 - `https://host` for public skills;
-- `https://host/p/<project>` for one project's public skills;
-- `https://host/i/<key>` for every skill your key opens;
-- `https://host/i/<key>/.well-known/agent-skills/<skill>` for one skill.
+- `https://host/p/<project>` for one project's skills;
+- `https://host/p/<project>/.well-known/agent-skills/<skill>` for one skill.
 
 Each skill lands in `.agents/skills/<name>`, or in `~/.agents/skills/<name>` with `-g`. Agents that read another directory get a symlink to it.
 
@@ -35,12 +36,43 @@ With `-y`, or inside an agent, a project install fails for an agent rather than 
 
 Inside a coding agent (Claude Code, Codex, Cursor and others are detected from their environment), `-y` is implied and the agent is added to the targets. If `AI_AGENT` names an agent it does not know, `-y` is still implied, and the skill goes only into `.agents/skills`. Cursor's terminal on its own does not count as an agent.
 
-## What can still see the key
+## Signing in
 
-- **The command line.** Your shell history and the agent's transcript keep the command you ran.
-- **npm's debug logs.** npm writes the full command line of every `npx` run to `_logs` in its cache directory (`npm config get cache`, usually `~/.npm`). Run `npx --logs-max=0 skillsgist add ...` to skip them, and delete any old logs that already hold a key.
+```bash
+npx skillsgist login https://skills.example.com/p/<project>
+```
 
-If a key has leaked, reset it on the project's settings page in skillsgist.
+`login` prints a link and a code, and opens the link in your browser. Check that the page shows the same code, sign in, tick the projects this computer may install from, and approve. From then on, `add` sends the sign-in with its requests to that registry, and to no other.
+
+- Run `login` again to change the projects. The new sign-in replaces the old one, which is revoked.
+- `npx skillsgist whoami` shows who you are signed in as, and for which projects.
+- `npx skillsgist logout` revokes this computer's sign-in and deletes it. Your account page in skillsgist lists every computer you signed in from, and can revoke any of them.
+- Inside a coding agent, or without a terminal, `login` only prints the link and the code, so the agent can pass them on to you.
+
+The sign-in is kept in `~/.config/skillsgist/credentials.json` (under `$XDG_CONFIG_HOME` if set, `%APPDATA%\skillsgist` on Windows, or `$SKILLSGIST_CONFIG_DIR`), readable only by you. It lapses after 90 days without use.
+
+## CI and containers
+
+Generate an install key on the project's settings page, keep it in your CI's secret store, and set both variables:
+
+```bash
+SKILLSGIST_HOST=https://skills.example.com \
+SKILLSGIST_INSTALL_KEY=<install key> \
+npx skillsgist add https://skills.example.com/p/<project> -y
+```
+
+The key is sent in a request header, and only to the registry that `SKILLSGIST_HOST` names. It opens that one project. Nothing is written to disk.
+
+## What can see your credentials
+
+- **The credentials file.** Every program that runs as you can read it, coding agents included. Sign out on computers you stop using.
+- **CI logs.** skillsgist never prints the key; keeping it in the secret store lets your CI mask it too.
+
+If a sign-in leaks, revoke it on your account page. If an install key leaks, reset it on the project's settings page.
+
+## Upgrading from 0.4
+
+Addresses with an install key in them (`https://host/i/<key>`) no longer work: use the project's address with `login`, or the variables above. A skillsgist registry older than this release cannot sign you in; until it is upgraded, `npx skillsgist@0.4.1` still installs from it.
 
 ## Development
 
