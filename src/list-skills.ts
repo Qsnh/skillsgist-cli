@@ -1,7 +1,7 @@
 import type { Dirent } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { agentsById, canonicalSkillsRoot, loadAgents, skillsRoot, type Agent, type AgentEnvironment, type Scope } from "./agents.js";
+import { agentFilter, canonicalSkillsRoot, loadAgents, skillsRoot, type Agent, type AgentEnvironment, type AgentFilter, type Scope } from "./agents.js";
 import { skillName } from "./archive.js";
 import { compareBy, formatTable, plural } from "./format.js";
 import { locator, type Locator } from "./installer.js";
@@ -38,12 +38,6 @@ export interface Listing {
   problems: string[];
 }
 
-interface Filter {
-  agents: Agent[];
-  everyFolder: boolean;
-  nameAll: boolean;
-}
-
 interface Folder {
   dir: string;
   agents: Agent[];
@@ -71,14 +65,7 @@ export function listedScopes(options: ListOptions): ListScope[] {
   return options.global ? ["global"] : ["project"];
 }
 
-function agentFilter(agents: Agent[], requested: string[] | null): Filter {
-  if (requested === null) return { agents, everyFolder: false, nameAll: false };
-  const named = agentsById(agents, requested.filter((id) => id !== "*"));
-  if (requested.includes("*")) return { agents, everyFolder: true, nameAll: false };
-  return { agents: named, everyFolder: true, nameAll: true };
-}
-
-function scopeFolders(scope: Scope, filter: Filter): Folder[] {
+function scopeFolders(scope: Scope, filter: AgentFilter): Folder[] {
   const dirs = new Map<string, Agent[]>();
   for (const agent of filter.agents) {
     const root = skillsRoot(agent, scope);
@@ -93,7 +80,7 @@ function scopeFolders(scope: Scope, filter: Filter): Folder[] {
     .sort(([a, first], [b, second]) => (a === canonical ? -1 : b === canonical ? 1 : byId(first[0], second[0])))
     .map(([dir, agents]) => ({
       dir,
-      agents: filter.nameAll || agents.length === 1 ? agents : agents.filter((agent) => agent.installed),
+      agents: filter.named || agents.length === 1 ? agents : agents.filter((agent) => agent.installed),
       onlyLinksTo: !scope.global && !filter.everyFolder && agents.every((agent) => agent.projectOwned && !agent.detectedInProject) ? canonical : null,
     }));
 }
@@ -162,9 +149,14 @@ async function scanScope(scope: Scope, folders: Folder[], scan: Scan, skip: Prom
   return result;
 }
 
-export async function findInstalledSkills(environment: AgentEnvironment, options: ListOptions): Promise<Listing> {
-  const filter = agentFilter(loadAgents(environment), options.agents);
-  const where = locator();
+export interface Known {
+  agents: Agent[];
+  where: Locator;
+}
+
+export async function findInstalledSkills(environment: AgentEnvironment, options: ListOptions, known?: Known): Promise<Listing> {
+  const filter = agentFilter(known?.agents ?? loadAgents(environment), options.agents);
+  const where = known?.where ?? locator();
   const problems: string[] = [];
   const scan: Scan = {
     where,

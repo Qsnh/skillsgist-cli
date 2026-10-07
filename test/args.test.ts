@@ -198,6 +198,16 @@ describe("parseCommandLine", () => {
     expect(options.agents).toEqual(["claude-code", "codex"]);
   });
 
+  it("reads a skill name after -a's agent ids as a skill to remove", () => {
+    expect(remove("remove", "-a", "claude-code", "my-skill").options).toMatchObject({ agents: ["claude-code"], skills: ["my-skill"] });
+    expect(remove("remove", "-a", "claude-code", "codex", "*", "my-skill", "other").options).toMatchObject({
+      agents: ["claude-code", "codex", "*"],
+      skills: ["my-skill", "other"],
+    });
+    expect(remove("remove", "-a", "nope", "my-skill").options).toMatchObject({ agents: ["nope"], skills: ["my-skill"] });
+    expect(remove("remove", "-s", "my-skill", "codex").options).toMatchObject({ agents: null, skills: ["my-skill", "codex"] });
+  });
+
   it("expands --all and '*' for remove", () => {
     expect(remove("remove", "--all").options).toEqual({ global: false, agents: null, skills: [], all: true, yes: true });
     expect(remove("remove", "*").options).toMatchObject({ all: true, yes: false, skills: [] });

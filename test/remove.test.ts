@@ -6,7 +6,7 @@ import { loadAgents, type AgentEnvironment } from "../src/agents.js";
 import { CliError } from "../src/errors.js";
 import { installSkill, type InstallOptions } from "../src/installer.js";
 import { shortPath } from "../src/paths.js";
-import { findRemovals, pickRemovals, runRemove, vetRemovals, type RemoveContext, type RemoveOptions } from "../src/remove.js";
+import { findRemovals, pickRemovals, runRemove, vetRemovals, type RemoveContext, type RemoveOptions, type Vetting } from "../src/remove.js";
 import { cleanup, sandboxExists, tempDir } from "./helpers/fs.js";
 
 afterEach(cleanup);
@@ -97,6 +97,18 @@ function left(base: string): { agents: string[]; claude: string[] } {
   return { agents: names(join(base, ".agents/skills")), claude: names(join(base, ".claude/skills")) };
 }
 
+const reasons = (vetting: Vetting) => [...vetting.refusals.values()].flat();
+
+function chained() {
+  const box = setup();
+  writeSkillMd(join(box.root, "dev/demo-skill"), skillMd("demo-skill"));
+  mkdirSync(join(box.cwd, ".agents/skills"), { recursive: true });
+  mkdirSync(join(box.cwd, ".claude/skills"), { recursive: true });
+  symlinkSync(join(box.root, "dev/demo-skill"), join(box.cwd, ".agents/skills/demo-skill"));
+  symlinkSync("../../.agents/skills/demo-skill", join(box.cwd, ".claude/skills/demo-skill"));
+  return box;
+}
+
 async function failure(promise: Promise<unknown>): Promise<CliError> {
   const error = await promise.then(
     () => null,
@@ -162,7 +174,7 @@ describe("findRemovals", () => {
         name: "demo-skill",
         path: join(cwd, ".agents/skills/demo-skill"),
         entries: [{ path: join(cwd, ".agents/skills/demo-skill"), linked: false }],
-        keptBy: [join(cwd, ".claude/skills/demo-skill")],
+        keptBy: [{ path: join(cwd, ".claude/skills/demo-skill"), through: join(cwd, ".agents/skills/demo-skill"), same: false, agent: "claude-code" }],
       },
     ]);
 
@@ -182,6 +194,17 @@ describe("findRemovals", () => {
     expect((await findRemovals(environment(), removeOptions({ agents: ["goose"] }))).removals).toEqual([]);
 
     await expect(findRemovals(environment(), removeOptions({ agents: ["nope"] }))).rejects.toThrow(/^Invalid agents: nope\./);
+  });
+
+  it("names a link that leads through a link -a removes", async () => {
+    const { cwd, environment } = chained();
+    const cursorOnly = await findRemovals(environment(), removeOptions({ agents: ["cursor"] }));
+    expect(cursorOnly.removals.map((removal) => removal.keptBy)).toEqual([
+      [{ path: join(cwd, ".claude/skills/demo-skill"), through: join(cwd, ".agents/skills/demo-skill"), same: false, agent: "claude-code" }],
+    ]);
+
+    const claudeOnly = await findRemovals(environment(), removeOptions({ agents: ["claude-code"] }));
+    expect(claudeOnly.removals.map((removal) => removal.keptBy)).toEqual([[]]);
   });
 });
 
@@ -213,11 +236,38 @@ describe("vetRemovals", () => {
     const { removals } = await findRemovals(environment(), removeOptions({ agents: ["cursor"] }));
 
     for (const yes of [false, true]) {
-      const { refusals } = await vetRemovals(removals, environment(), { global: false, yes });
-      expect(refusals).toEqual([
-        `${shortPath(join(cwd, ".agents/skills/demo-skill"), home, cwd)} is still linked from ${shortPath(join(cwd, ".claude/skills/demo-skill"), home, cwd)}; add those agents to -a, or leave out -a`,
-      ]);
+      const vetting = await vetRemovals(removals, environment(), { global: false, yes });
+      expect(vetting.refusals).toEqual(
+        new Map([
+          [
+            removals[0],
+            [
+              `${shortPath(join(cwd, ".agents/skills/demo-skill"), home, cwd)} is still linked from ${shortPath(join(cwd, ".claude/skills/demo-skill"), home, cwd)}; add claude-code to -a, or leave out -a`,
+            ],
+          ],
+        ]),
+      );
     }
+  });
+
+  it("refuses to delete a link that another agent's link leads through", async () => {
+    const { home, cwd, environment } = chained();
+    const { removals } = await findRemovals(environment(), removeOptions({ agents: ["cursor"] }));
+    expect(reasons(await vetRemovals(removals, environment(), { global: false, yes: false }))).toEqual([
+      `${shortPath(join(cwd, ".agents/skills/demo-skill"), home, cwd)} is still linked from ${shortPath(join(cwd, ".claude/skills/demo-skill"), home, cwd)}; add claude-code to -a, or leave out -a`,
+    ]);
+  });
+
+  it("says a folder seen through a symlinked skills directory is the same folder, and names an agent that uses it", async () => {
+    const { home, cwd, environment, install } = setup();
+    await install("demo-skill", ["cursor"]);
+    mkdirSync(join(cwd, ".claude"));
+    symlinkSync("../.agents/skills", join(cwd, ".claude/skills"));
+    const { removals } = await findRemovals(environment(), removeOptions({ agents: ["claude-code"] }));
+    expect(removals.map((removal) => removal.entries)).toEqual([[{ path: join(cwd, ".claude/skills/demo-skill"), linked: false }]]);
+    expect(reasons(await vetRemovals(removals, environment(), { global: false, yes: false }))).toEqual([
+      `${shortPath(join(cwd, ".claude/skills/demo-skill"), home, cwd)} is the same folder as ${shortPath(join(cwd, ".agents/skills/demo-skill"), home, cwd)}; add amp to -a, or leave out -a`,
+    ]);
   });
 
   it("flags a link leading outside the project, refusing it only with -y, and never in the global scope", async () => {
@@ -233,18 +283,18 @@ describe("vetRemovals", () => {
     const quiet = await vetRemovals(removals, environment(), { global: false, yes: false });
     expect(quiet.located).toEqual(new Map([[linkPath, outsidePath]]));
     expect(quiet.outside).toEqual(new Set([linkPath]));
-    expect(quiet.refusals).toEqual([]);
+    expect(reasons(quiet)).toEqual([]);
 
     const confirmed = await vetRemovals(removals, environment(), { global: false, yes: true });
     expect(confirmed.outside).toEqual(new Set([linkPath]));
-    expect(confirmed.refusals).toEqual([
+    expect(reasons(confirmed)).toEqual([
       `${shortPath(linkPath, home, cwd)} leads out of the project to ${outsidePath}; run it in a terminal without -y or --all to confirm`,
     ]);
 
     const globalVet = await vetRemovals(removals, environment(), { global: true, yes: true });
     expect(globalVet.located).toEqual(new Map([[linkPath, outsidePath]]));
     expect(globalVet.outside.size).toBe(0);
-    expect(globalVet.refusals).toEqual([]);
+    expect(reasons(globalVet)).toEqual([]);
   });
 
   it("keeps an undetected OpenClaw's link in its removal, and leaves the project's own folder out of every removal", async () => {
@@ -268,16 +318,16 @@ describe("vetRemovals", () => {
 
     const demo = removals.find((removal) => removal.name === "demo-skill")!;
     const quiet = await vetRemovals([demo], environment(), { global: false, yes: false });
-    expect(quiet.refusals).toEqual([]);
+    expect(reasons(quiet)).toEqual([]);
 
     const confirmed = await vetRemovals([demo], environment(), { global: false, yes: true });
-    expect(confirmed.refusals).toEqual([
+    expect(reasons(confirmed)).toEqual([
       `${shortPath(join(cwd, "data/skills/demo-skill"), home, cwd)} is not a link, and the project keeps its own skills there; run it in a terminal without -y or --all to confirm`,
     ]);
 
     const other = removals.find((removal) => removal.name === "other")!;
     const otherVetted = await vetRemovals([other], environment(), { global: false, yes: true });
-    expect(otherVetted.refusals).toEqual([]);
+    expect(reasons(otherVetted)).toEqual([]);
   });
 
   it("refuses with -y the project's own folder reached through a symlinked skills directory, and says where it really is", async () => {
@@ -287,10 +337,10 @@ describe("vetRemovals", () => {
     expect(removals.map((removal) => removal.entries)).toEqual([[{ path: shown, linked: false }]]);
 
     const quiet = await vetRemovals(removals, environment(), { global: false, yes: false });
-    expect(quiet).toEqual({ located: new Map([[shown, join(cwd, "skills/own")]]), outside: new Set(), refusals: [] });
+    expect(quiet).toEqual({ located: new Map([[shown, join(cwd, "skills/own")]]), outside: new Set(), refusals: new Map() });
 
     const confirmed = await vetRemovals(removals, environment(), { global: false, yes: true });
-    expect(confirmed.refusals).toEqual([
+    expect(reasons(confirmed)).toEqual([
       `${shortPath(shown, home, cwd)} is not a link, and the project keeps its own skills there; run it in a terminal without -y or --all to confirm`,
     ]);
   });
@@ -449,13 +499,17 @@ describe("runRemove", () => {
     expect(present(outsideLink)).toBe(false);
   });
 
-  it("refuses under -y and --all the project's own folder reached through a symlinked skills directory, and removes it once confirmed", async () => {
+  it("refuses under -y and skips under --all the project's own folder reached through a symlinked skills directory, and removes it once confirmed", async () => {
     const { cwd, context } = aliasedOwn();
-    for (const options of [{ skills: ["own"], yes: true }, { all: true, yes: true }]) {
-      const refused = await failure(runRemove(removeOptions(options), context(fakeUi().ui)));
-      expect(refused.message).toMatch(/^Nothing was removed:\n/);
-      expect(existsSync(join(cwd, "skills/own/SKILL.md"))).toBe(true);
-    }
+    const refused = await failure(runRemove(removeOptions({ skills: ["own"], yes: true }), context(fakeUi().ui)));
+    expect(refused.message).toMatch(/^Nothing was removed:\n/);
+    expect(existsSync(join(cwd, "skills/own/SKILL.md"))).toBe(true);
+
+    const all = fakeUi();
+    expect(await runRemove(removeOptions({ all: true, yes: true }), context(all.ui))).toBe(1);
+    expect(all.text()).toContain("warn: Skipping 1 skill:\n./.claude/skills/own is not a link, and the project keeps its own skills there;");
+    expect(all.text()).toMatch(/Nothing was removed$/);
+    expect(existsSync(join(cwd, "skills/own/SKILL.md"))).toBe(true);
 
     const ui = fakeUi({ confirm: true });
     expect(await runRemove(removeOptions({ skills: ["own"] }), context(ui.ui))).toBe(0);
@@ -471,7 +525,7 @@ describe("runRemove", () => {
       const ui = fakeUi();
       expect(await runRemove(removeOptions({ all: true, yes: true }), context(ui.ui))).toBe(1);
       expect(ui.text()).toMatch(
-        /^error: Failed to remove 4 paths\n✗ \.\/\.claude\/skills\/demo-skill: [^\n]*EACCES[^\n]*\n✗ \.\/\.agents\/skills\/demo-skill: kept, because a link to it could not be removed\n✗ \.\/\.claude\/skills\/other-skill: [^\n]*EACCES[^\n]*\n✗ \.\/\.agents\/skills\/other-skill: kept, because a link to it could not be removed$/m,
+        /^error: Failed to remove 2 paths\n✗ \.\/\.claude\/skills\/demo-skill: [^\n]*EACCES[^\n]*\n  \.\/\.agents\/skills\/demo-skill was kept, because a link to it could not be removed\n✗ \.\/\.claude\/skills\/other-skill: [^\n]*EACCES[^\n]*\n  \.\/\.agents\/skills\/other-skill was kept, because a link to it could not be removed$/m,
       );
       expect(ui.text()).not.toContain("Removed");
       expect(ui.text()).toMatch(/Done!$/);
@@ -492,7 +546,7 @@ describe("runRemove", () => {
       expect(await runRemove(removeOptions({ all: true, yes: true }), context(ui.ui))).toBe(1);
       expect(ui.text()).toContain("Removed 1 skill\n✓ other-skill\n");
       expect(ui.text()).toMatch(
-        /^error: Failed to remove 2 paths\n✗ \.\/\.claude\/skills\/demo-skill: [^\n]*EACCES[^\n]*\n✗ \.\/\.agents\/skills\/demo-skill: kept, because a link to it could not be removed$/m,
+        /^error: Failed to remove 1 path\n✗ \.\/\.claude\/skills\/demo-skill: [^\n]*EACCES[^\n]*\n  \.\/\.agents\/skills\/demo-skill was kept, because a link to it could not be removed$/m,
       );
       expect(left(cwd)).toEqual({ agents: ["demo-skill"], claude: ["demo-skill"] });
     } finally {
@@ -500,19 +554,103 @@ describe("runRemove", () => {
     }
   });
 
-  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("warns about a folder it cannot read and still removes the rest", async () => {
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("warns about a folder it cannot read, still removes the rest, and returns 1", async () => {
     const { cwd, context, install } = setup();
     await install("demo-skill", ["claude-code"]);
     writeSkillMd(join(cwd, ".agents/skills/locked"), skillMd("locked"));
     chmodSync(join(cwd, ".agents/skills/locked"), 0o000);
     try {
       const ui = fakeUi();
-      expect(await runRemove(removeOptions({ skills: ["demo-skill"], yes: true }), context(ui.ui))).toBe(0);
+      expect(await runRemove(removeOptions({ skills: ["demo-skill"], yes: true }), context(ui.ui))).toBe(1);
       expect(ui.text()).toContain("warn: Cannot read ./.agents/skills/locked/SKILL.md (EACCES)");
+      expect(ui.text()).toContain("Removed 1 skill\n✓ demo-skill");
       expect(left(cwd)).toEqual({ agents: ["locked"], claude: [] });
+
+      const all = fakeUi();
+      expect(await runRemove(removeOptions({ all: true, yes: true }), context(all.ui))).toBe(1);
+      expect(all.text()).toContain("warn: Cannot read ./.agents/skills/locked/SKILL.md (EACCES)");
+      expect(all.text()).toContain("No project skills to remove");
     } finally {
       chmodSync(join(cwd, ".agents/skills/locked"), 0o755);
     }
+  });
+
+  it("removes the other skills under --all when AstrBot keeps its own folder, and returns 1", async () => {
+    const { cwd, context, install } = setup();
+    mkdirSync(join(cwd, ".astrbot"));
+    writeSkillMd(join(cwd, "data/skills/own"), skillMd("own"));
+    await install("demo-skill", ["claude-code"]);
+    const ui = fakeUi();
+    expect(await runRemove(removeOptions({ all: true, yes: true }), context(ui.ui, { CLAUDECODE: "1" }, false))).toBe(1);
+    expect(ui.text()).toContain("warn: Skipping 1 skill:\n./data/skills/own is not a link, and the project keeps its own skills there;");
+    expect(ui.text()).toContain("Removed 1 skill\n✓ demo-skill");
+    expect(left(cwd)).toEqual({ agents: [], claude: [] });
+    expect(existsSync(join(cwd, "data/skills/own/SKILL.md"))).toBe(true);
+  });
+
+  it("refuses to remove a link that another agent's link leads through", async () => {
+    const { root, cwd, context } = chained();
+    const refused = await failure(runRemove(removeOptions({ agents: ["cursor"], skills: ["demo-skill"], yes: true }), context(fakeUi().ui)));
+    expect(refused.message).toBe(
+      "Nothing was removed:\n./.agents/skills/demo-skill is still linked from ./.claude/skills/demo-skill; add claude-code to -a, or leave out -a",
+    );
+    expect(lstatSync(join(cwd, ".agents/skills/demo-skill")).isSymbolicLink()).toBe(true);
+
+    expect(await runRemove(removeOptions({ agents: ["claude-code"], skills: ["demo-skill"], yes: true }), context(fakeUi().ui))).toBe(0);
+    expect(present(join(cwd, ".claude/skills/demo-skill"))).toBe(false);
+    expect(lstatSync(join(cwd, ".agents/skills/demo-skill")).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(root, "dev/demo-skill/SKILL.md"))).toBe(true);
+  });
+
+  it("shows in the picker what -a removes, and leaves out skills other agents still use", async () => {
+    const { cwd, context, install } = setup();
+    await install("demo-skill", ["claude-code"]);
+    await install("other-skill", ["cursor"]);
+
+    const claude = fakeUi({ selectInstalled: CANCELLED });
+    expect(await runRemove(removeOptions({ agents: ["claude-code"] }), context(claude.ui))).toBe(0);
+    expect(claude.text()).toContain("demo-skill ./.claude/skills/demo-skill (link)");
+    expect(claude.text()).not.toContain("other-skill");
+
+    const cursor = fakeUi({ selectInstalled: [0], confirm: true });
+    expect(await runRemove(removeOptions({ agents: ["cursor"] }), context(cursor.ui))).toBe(0);
+    expect(cursor.text()).toContain(
+      "warn: Skipping 1 skill:\n./.agents/skills/demo-skill is still linked from ./.claude/skills/demo-skill; add claude-code to -a, or leave out -a",
+    );
+    expect(cursor.text()).toContain("\nother-skill ./.agents/skills/other-skill\n");
+    expect(cursor.text()).not.toContain("\ndemo-skill ./");
+    expect(cursor.text()).toContain("Removed 1 skill\n✓ other-skill");
+    expect(left(cwd)).toEqual({ agents: ["demo-skill"], claude: ["demo-skill"] });
+
+    const none = fakeUi();
+    expect(await runRemove(removeOptions({ agents: ["cursor"] }), context(none.ui))).toBe(0);
+    expect(none.asked).toEqual([]);
+    expect(none.text()).toMatch(/Nothing was removed$/);
+    expect(left(cwd)).toEqual({ agents: ["demo-skill"], claude: ["demo-skill"] });
+  });
+
+  it("does not point elsewhere for paths that are only reached through a symlinked project or home directory", async () => {
+    const { root, home, cwd, exists, install } = setup();
+    symlinkSync(cwd, join(root, "project-alias"));
+    symlinkSync(home, join(root, "home-alias"));
+    await install("demo-skill", ["claude-code"]);
+    await install("glob-skill", ["claude-code"], { global: true });
+    for (const global of [false, true]) {
+      const ui = fakeUi();
+      const aliased = { ui: ui.ui, home: join(root, "home-alias"), cwd: join(root, "project-alias"), env: {}, interactive: true, exists };
+      expect(await runRemove(removeOptions({ global, all: true, yes: true }), aliased)).toBe(0);
+      expect(ui.text()).not.toContain("→");
+      expect(ui.text()).toContain(global ? "  ~/.claude/skills/glob-skill (link)\n  ~/.agents/skills/glob-skill" : "  ./.claude/skills/demo-skill (link)\n  ./.agents/skills/demo-skill");
+    }
+    expect(left(cwd)).toEqual({ agents: [], claude: [] });
+    expect(left(home)).toEqual({ agents: [], claude: [] });
+
+    const ui = fakeUi();
+    await install("home-skill", ["claude-code"], { cwd: home });
+    const fromHome = { ui: ui.ui, home: join(root, "home-alias"), cwd: home, env: {}, interactive: true, exists };
+    expect(await runRemove(removeOptions({ all: true, yes: true }), fromHome)).toBe(0);
+    expect(ui.text()).not.toContain("→");
+    expect(left(home)).toEqual({ agents: [], claude: [] });
   });
 
   it("prints no terminal escapes or install keys found in a skill's name", async () => {

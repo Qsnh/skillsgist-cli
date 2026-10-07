@@ -135,6 +135,18 @@ describe("installSkill", () => {
     expect(result.agents[1].status).toBe("symlinked");
   });
 
+  it("leaves a project's own skills/ directory alone when another agent's skills directory links to it", async () => {
+    const { cwd, pick, options } = setup();
+    mkdirSync(join(cwd, "skills/demo-skill"), { recursive: true });
+    writeFileSync(join(cwd, "skills/demo-skill/SKILL.md"), "mine");
+    mkdirSync(join(cwd, ".claude"));
+    symlinkSync("../skills", join(cwd, ".claude/skills"));
+    expect(await replacedDirs("demo-skill", pick("claude-code"), options)).toEqual([]);
+    const result = await installSkill("demo-skill", files, pick("claude-code"), options);
+    expect(readFileSync(join(cwd, "skills/demo-skill/SKILL.md"), "utf8")).toBe("mine");
+    expect(result.agents[0]).toMatchObject({ status: "failed", error: expect.stringContaining(".claude/skills/demo-skill already exists and is not a link") });
+  });
+
   it("replaces a project's own skills/ directory once the summary is confirmed, and an earlier link without it", async () => {
     const { cwd, pick, options } = setup();
     mkdirSync(join(cwd, "skills/demo-skill"), { recursive: true });

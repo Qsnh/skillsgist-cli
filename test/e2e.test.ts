@@ -402,7 +402,8 @@ describe("skillsgist remove", () => {
     const before = sandboxSnapshot(box);
     const result = await run(box, ["remove", "--all"]);
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("Nothing was removed:");
+    expect(result.output).toContain("Skipping 1 skill:");
+    expect(result.output).toContain("Nothing was removed");
     expect(existsSync(join(box.cwd, "skills/own/SKILL.md"))).toBe(true);
     expect(sandboxSnapshot(box)).toEqual(before);
   });

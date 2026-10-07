@@ -1,4 +1,5 @@
 import type { AddOptions } from "./add.js";
+import { isAgentId } from "./agents.js";
 import { CliError } from "./errors.js";
 import type { ListOptions } from "./list-skills.js";
 import type { RemoveOptions } from "./remove.js";
@@ -62,9 +63,10 @@ function helpOrVersion(arg: string): Command | null {
   return null;
 }
 
-function valuesAfter(rest: string[], i: number): string[] {
+function valuesAfter(rest: string[], i: number, more: (value: string) => boolean = () => true): string[] {
   const values: string[] = [];
-  for (let next = i + 1; next < rest.length && !rest[next].startsWith("-") && !LOOKS_LIKE_URL.test(rest[next]); next += 1) values.push(rest[next]);
+  const takes = (value: string) => !value.startsWith("-") && !LOOKS_LIKE_URL.test(value) && (values.length === 0 || more(value));
+  for (let next = i + 1; next < rest.length && takes(rest[next]); next += 1) values.push(rest[next]);
   if (values.length === 0) throw new CliError(`${rest[i]} needs at least one value`, { showUsage: true });
   return values;
 }
@@ -131,13 +133,17 @@ function parseRemove(rest: string[]): Command {
         options.yes = true;
         break;
       case "-a":
-      case "--agent":
+      case "--agent": {
+        const values = valuesAfter(rest, i, (value) => value === "*" || isAgentId(value));
+        i += values.length;
+        options.agents = [...(options.agents ?? []), ...values];
+        break;
+      }
       case "-s":
       case "--skill": {
         const values = valuesAfter(rest, i);
         i += values.length;
-        if (arg === "-a" || arg === "--agent") options.agents = [...(options.agents ?? []), ...values];
-        else options.skills.push(...values);
+        options.skills.push(...values);
         break;
       }
       default:
