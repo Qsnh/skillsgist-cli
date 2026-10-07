@@ -49,6 +49,12 @@ describe("clackUi", () => {
     ]);
   });
 
+  it("cuts a long path hint when offering installed skills", async () => {
+    multiselect.mockResolvedValue([0]);
+    await clackUi().selectInstalled([{ name: "a", path: `./${"x".repeat(70)}` }]);
+    expect(multiselect.mock.lastCall![0].options[0].hint).toBe(`./${"x".repeat(55)}…`);
+  });
+
   it("writes errors to stderr", () => {
     clackUi().error("boom");
     expect(error).toHaveBeenCalledWith("boom", { output: process.stderr });

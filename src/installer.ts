@@ -3,7 +3,7 @@ import { lstat, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises
 import { basename, dirname, join, relative, sep } from "node:path";
 import { canonicalSkillsRoot, projectOwnedRoots, skillsRoot, type Agent } from "./agents.js";
 import type { SkillFiles } from "./archive.js";
-import { CliError } from "./errors.js";
+import { CliError, errorMessage } from "./errors.js";
 import { isInside } from "./paths.js";
 
 export interface InstallOptions {
@@ -100,16 +100,20 @@ export function projectGuard(cwd: string, where: Locator): ProjectGuard {
 
 const entry = (path: string): Promise<Stats | null> => lstat(path).catch(() => null);
 
-async function refusal(dir: string, canonicalPath: string, options: InstallOptions, where: Locator, existing?: Stats | null): Promise<string | null> {
-  if (options.global || options.confirmed) return null;
+type Refusal = (dir: string, existing?: Stats | null) => Promise<string | null>;
+
+function refuser(canonicalPath: string, options: InstallOptions, where: Locator): Refusal {
+  if (options.global || options.confirmed) return async () => null;
   const guard = projectGuard(options.cwd, where);
-  const shown = `.${sep}${relative(options.cwd, dir)}`;
-  const away = await guard.outside(dir);
-  if (away !== null) return `${shown} leads out of the project to ${away}; install from a terminal without -y to confirm`;
-  if (!(await guard.owned(dir))) return null;
-  const found = existing === undefined ? await entry(dir) : existing;
-  if (found === null || found.isSymbolicLink() || (await where.located(dir)) === (await where.located(canonicalPath))) return null;
-  return `${shown} already exists and is not a link; remove it, or install from a terminal without -y to replace it`;
+  return async (dir, existing) => {
+    const shown = `.${sep}${relative(options.cwd, dir)}`;
+    const away = await guard.outside(dir);
+    if (away !== null) return `${shown} leads out of the project to ${away}; install from a terminal without -y to confirm`;
+    if (!(await guard.owned(dir))) return null;
+    const found = existing === undefined ? await entry(dir) : existing;
+    if (found === null || found.isSymbolicLink() || (await where.located(dir)) === (await where.located(canonicalPath))) return null;
+    return `${shown} already exists and is not a link; remove it, or install from a terminal without -y to replace it`;
+  };
 }
 
 async function writeSkill(dir: string, files: SkillFiles): Promise<void> {
@@ -140,7 +144,7 @@ async function attempt(action: () => Promise<void>): Promise<string | null> {
     await action();
     return null;
   } catch (err) {
-    return (err instanceof Error && err.message) || String(err);
+    return errorMessage(err);
   }
 }
 
@@ -163,7 +167,8 @@ export async function installSkill(
     if (dir === null) results.push(unsupported(agent));
     else targets.push([agent, dir]);
   }
-  const guarded = async (dir: string, action: () => Promise<void>) => (await refusal(dir, canonicalPath, options, where)) ?? (await attempt(action));
+  const refusal = refuser(canonicalPath, options, where);
+  const guarded = async (dir: string, action: () => Promise<void>) => (await refusal(dir)) ?? (await attempt(action));
   if (options.copy) {
     const written = new Map<string, string | null>();
     for (const [agent, dir] of targets) {
@@ -175,7 +180,7 @@ export async function installSkill(
   }
   const canonicalError = await guarded(canonicalPath, () => writeSkill(canonicalPath, files));
   for (const [agent, dir] of targets) {
-    const error = canonicalError ?? (dir === canonicalPath ? null : await refusal(dir, canonicalPath, options, where));
+    const error = canonicalError ?? (dir === canonicalPath ? null : await refusal(dir));
     if (error !== null) {
       results.push({ agent, status: "failed", path: dir, error });
     } else if (dir === canonicalPath) {
@@ -202,12 +207,13 @@ function targetDirs(name: string, agents: Agent[], options: InstallOptions): str
 export async function replacedDirs(name: string, agents: Agent[], options: InstallOptions, where: Locator = locator()): Promise<string[]> {
   const canonicalPath = canonicalSkillDir(name, options);
   const dirs = targetDirs(name, agents, options);
+  const refusal = refuser(canonicalPath, options, where);
   const replaced = await Promise.all(
     dirs.map(async (dir) => {
       const existing = await entry(dir);
       if (existing === null) return false;
       if (!options.copy && dir !== canonicalPath && (await where.real(dir)) === (await where.real(canonicalPath))) return false;
-      return (await refusal(dir, canonicalPath, options, where, existing)) === null;
+      return (await refusal(dir, existing)) === null;
     }),
   );
   return dirs.filter((_, index) => replaced[index]);

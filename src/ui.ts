@@ -62,7 +62,7 @@ export function clackUi(): Ui {
       return settle<number[]>(
         await clack.multiselect({
           message: show("Select skills to remove"),
-          options: skills.map((skill, index) => ({ value: index, label: show(skill.name), hint: show(skill.path) })),
+          options: skills.map((skill, index) => ({ value: index, label: show(skill.name), hint: hint(show(skill.path)) })),
           required: true,
         }),
       );

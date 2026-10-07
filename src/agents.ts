@@ -247,7 +247,7 @@ function declaredAgentName(env: NodeJS.ProcessEnv): string | null {
 }
 
 function runningAgentId(name: string): string | null {
-  return RUNNING_AGENT_IDS.get(name) ?? (AGENTS.some((agent) => agent.id === name) ? name : null);
+  return RUNNING_AGENT_IDS.get(name) ?? (isAgentId(name) ? name : null);
 }
 
 function signalledAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | null {

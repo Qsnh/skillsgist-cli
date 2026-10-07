@@ -84,8 +84,8 @@ function formatList(items: string[], max = 5): string {
   return items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
 }
 
-function cancelled(ui: Ui): number {
-  ui.cancel("Installation cancelled");
+export function cancelled(ui: Ui, message = "Installation cancelled"): number {
+  ui.cancel(message);
   return 0;
 }
 
