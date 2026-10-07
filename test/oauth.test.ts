@@ -122,6 +122,19 @@ describe("pollForToken", () => {
     expect(clock.sleeps).toEqual([1000, 1000, 1000]);
   });
 
+  it("never polls faster than once a second, even if the registry asks for interval 0", async () => {
+    const { meta, device } = await started({ pendingPolls: 2 });
+    const clock = fastClock();
+    expect(await pollForToken(meta, device, clock.options)).toEqual({ token: LOGIN_TOKEN, projects: ["team"] });
+    expect(clock.sleeps).toEqual([1000, 1000, 1000]);
+  });
+
+  it("caps the deadline so a huge expires_in cannot poll forever", async () => {
+    const { auth, meta, device } = await started({ expiresIn: 1e9, pendingPolls: 100000, interval: 600 });
+    expect(await failure(pollForToken(meta, device, fastClock().options))).toBe("The sign-in code expired. Run skillsgist login again.");
+    expect(auth.tokenPolls).toBe(2);
+  });
+
   it("waits five seconds longer each time it is told to slow down", async () => {
     const { meta, device } = await started({ pendingPolls: 2, slowDownOnPoll: 1, interval: 1 });
     const clock = fastClock();

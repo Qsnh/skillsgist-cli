@@ -9,6 +9,8 @@ export const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const MAX_JSON_BYTES = 64 * 1024;
 const SLOW_DOWN_MS = 5000;
 const DEFAULT_INTERVAL_S = 5;
+const MIN_INTERVAL_MS = 1000;
+const MAX_EXPIRES_S = 30 * 60;
 const USER_CODE = /^[A-Za-z0-9-]{1,32}$/;
 const TOKEN_VALUE = /^[\x21-\x7e]{1,4096}$/;
 
@@ -152,8 +154,8 @@ function expired(): CliError {
 export async function pollForToken(meta: ServerMetadata, device: DeviceCode, options: OAuthOptions = {}): Promise<Grant> {
   const sleep = options.sleep ?? ((ms: number, signal?: AbortSignal) => delay(ms, undefined, { signal }));
   const now = options.now ?? Date.now;
-  const deadline = now() + device.expiresIn * 1000;
-  let interval = device.interval * 1000;
+  const deadline = now() + Math.min(device.expiresIn, MAX_EXPIRES_S) * 1000;
+  let interval = Math.max(device.interval * 1000, MIN_INTERVAL_MS);
   for (;;) {
     await sleep(interval, options.signal);
     if (now() >= deadline) throw expired();
