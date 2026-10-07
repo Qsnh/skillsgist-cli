@@ -34,7 +34,7 @@ describe("parseCommandLine", () => {
     expect(add(name, "https://h.example").url).toBe("https://h.example");
   });
 
-  it("reads the flags npx skills users type", () => {
+  it("reads the boolean flags in short and long form", () => {
     expect(add("add", "https://h.example", "-g", "-y", "--copy", "-l").options).toEqual({
       global: true,
       agents: null,

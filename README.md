@@ -6,21 +6,6 @@ Install Agent Skills from a [skillsgist](https://github.com/Qsnh/skillsgist) reg
 npx skillsgist add https://skills.example.com/i/<install_key>
 ```
 
-## Why not `npx skills`?
-
-`npx skills add` works with a skillsgist registry. But a skillsgist install key lives in the URL, and `npx skills` 1.5 does not keep that URL to itself:
-
-- a global install writes it to `~/.agents/.skill-lock.json`;
-- its telemetry sends it to `add-skill.vercel.sh` unless `DO_NOT_TRACK` or `DISABLE_TELEMETRY` is set;
-- a bare `https://host/i/<key>` is looked up on `api.github.com`;
-- it prints the full URL.
-
-`npx skillsgist add` installs into the same agent directories, and:
-
-- writes nothing but the skill files and their symlinks: no lock file, no state, no cache;
-- talks to no host but the one in the URL, and never follows a redirect;
-- masks the key in everything it prints (`/i/abcd…`).
-
 ## Usage
 
 ```
@@ -53,7 +38,7 @@ Inside a coding agent (Claude Code, Codex, Cursor and others are detected from t
 ## What can still see the key
 
 - **The command line.** Your shell history and the agent's transcript keep the command you ran.
-- **npm's debug logs.** npm writes the full command line of every `npx` run to `_logs` in its cache directory (`npm config get cache`, usually `~/.npm`). Run `npx --logs-max=0 skillsgist add ...` to skip them, and delete old logs left by earlier `npx skills` runs.
+- **npm's debug logs.** npm writes the full command line of every `npx` run to `_logs` in its cache directory (`npm config get cache`, usually `~/.npm`). Run `npx --logs-max=0 skillsgist add ...` to skip them, and delete any old logs that already hold a key.
 
 If a key has leaked, reset it on the project's settings page in skillsgist.
 
