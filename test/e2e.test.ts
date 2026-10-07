@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -391,5 +391,19 @@ describe("skillsgist remove", () => {
     expect(mixed.code).toBe(1);
     expect(mixed.stderr).toContain("Cannot combine");
     expect(mixed.stderr).toContain("Usage:");
+  });
+
+  it("leaves the project's own skills folder alone under --all when a skills directory links to it", async () => {
+    const box = sandbox();
+    mkdirSync(join(box.cwd, "skills/own"), { recursive: true });
+    writeFileSync(join(box.cwd, "skills/own/SKILL.md"), "---\nname: own\ndescription: Demo.\n---\n");
+    mkdirSync(join(box.cwd, ".claude"));
+    symlinkSync("../skills", join(box.cwd, ".claude/skills"));
+    const before = sandboxSnapshot(box);
+    const result = await run(box, ["remove", "--all"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Nothing was removed:");
+    expect(existsSync(join(box.cwd, "skills/own/SKILL.md"))).toBe(true);
+    expect(sandboxSnapshot(box)).toEqual(before);
   });
 });

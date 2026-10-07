@@ -12,6 +12,7 @@ interface Answers {
   skills?: Answer<string[]>;
   agents?: Answer<string[]>;
   scope?: Answer<boolean>;
+  selectInstalled?: Answer<number[]>;
   confirm?: Answer<boolean>;
 }
 
@@ -43,6 +44,7 @@ function fakeUi(answers: Answers = {}) {
       return answer<Answer<string[]>>("agents");
     },
     selectScope: async () => answer<Answer<boolean>>("scope"),
+    selectInstalled: async () => answer<Answer<number[]>>("selectInstalled"),
     confirm: async () => answer<Answer<boolean>>("confirm"),
   };
   return { ui, asked, requests, text: () => lines.join("\n") };

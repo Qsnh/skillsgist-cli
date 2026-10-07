@@ -25,7 +25,8 @@ export interface Removal {
 }
 
 export interface Vetting {
-  outside: Map<string, string>;
+  located: Map<string, string>;
+  outside: Set<string>;
   refusals: string[];
 }
 
@@ -39,6 +40,16 @@ export interface RemoveContext {
 }
 
 type Short = (path: string) => string;
+
+const CONFIRM_HINT = "run it in a terminal without -y or --all to confirm";
+
+function ownedRoots(environment: AgentEnvironment): string[] {
+  const scope: Scope = { global: false, home: environment.home, cwd: environment.cwd };
+  return loadAgents(environment)
+    .filter((agent) => agent.projectOwned)
+    .map((agent) => skillsRoot(agent, scope))
+    .filter((dir): dir is string => dir !== null);
+}
 
 export async function findRemovals(environment: AgentEnvironment, options: RemoveOptions): Promise<{ removals: Removal[]; problems: string[] }> {
   const named = options.agents?.filter((id) => id !== "*") ?? [];
@@ -94,7 +105,8 @@ export async function vetRemovals(
 ): Promise<Vetting> {
   const { home, cwd } = environment;
   const short = (path: string) => shortPath(path, home, cwd);
-  const outside = new Map<string, string>();
+  const located = new Map<string, string>();
+  const outside = new Set<string>();
   const refusals: string[] = [];
   for (const removal of removals) {
     if (removal.keptBy.length === 0) continue;
@@ -102,33 +114,23 @@ export async function vetRemovals(
     if (real === undefined) continue;
     refusals.push(`${short(real.path)} is still linked from ${removal.keptBy.map(short).join(", ")}; add those agents to -a, or leave out -a`);
   }
-  if (!options.global) {
-    const root = await where.real(cwd);
-    for (const removal of removals) {
-      for (const entry of removal.entries) {
-        const located = await where.located(entry.path);
-        if (isInside(root, located)) continue;
-        outside.set(entry.path, located);
-        if (options.yes) refusals.push(`${short(entry.path)} leads out of the project to ${located}; remove from a terminal without -y to confirm`);
+  const root = options.global ? null : await where.real(cwd);
+  const owned = root !== null && options.yes ? new Set(await Promise.all(ownedRoots(environment).map((dir) => where.real(dir)))) : new Set<string>();
+  for (const removal of removals) {
+    for (const entry of removal.entries) {
+      const place = await where.located(entry.path);
+      if (place !== entry.path) located.set(entry.path, place);
+      if (root === null) continue;
+      if (!isInside(root, place)) {
+        outside.add(entry.path);
+        if (options.yes) refusals.push(`${short(entry.path)} leads out of the project to ${place}; ${CONFIRM_HINT}`);
       }
-    }
-    if (options.yes) {
-      const scope: Scope = { global: false, home, cwd };
-      const ownedRoots = new Set(
-        loadAgents(environment)
-          .filter((agent) => agent.projectOwned)
-          .map((agent) => skillsRoot(agent, scope))
-          .filter((dir): dir is string => dir !== null),
-      );
-      for (const removal of removals) {
-        for (const entry of removal.entries) {
-          if (entry.linked || !ownedRoots.has(dirname(entry.path))) continue;
-          refusals.push(`${short(entry.path)} is not a link, and the project keeps its own skills there; remove from a terminal without -y to confirm`);
-        }
+      if (!entry.linked && owned.has(dirname(place))) {
+        refusals.push(`${short(entry.path)} is not a link, and the project keeps its own skills there; ${CONFIRM_HINT}`);
       }
     }
   }
-  return { outside, refusals };
+  return { located, outside, refusals };
 }
 
 function cancelled(ui: Ui): number {
@@ -169,10 +171,10 @@ async function chooseRemovals(
   return chosen === CANCELLED ? CANCELLED : removals.filter((_, index) => chosen.includes(index));
 }
 
-function summary(removals: Removal[], outside: Map<string, string>, short: Short): string {
+function summary(removals: Removal[], vetting: Vetting, short: Short): string {
   const line = (entry: InstalledEntry) => {
-    const real = outside.get(entry.path);
-    const away = real === undefined ? "" : ` → ${short(real)} (outside the project)`;
+    const place = vetting.located.get(entry.path);
+    const away = place === undefined ? "" : ` → ${short(place)}${vetting.outside.has(entry.path) ? " (outside the project)" : ""}`;
     return `  ${short(entry.path)}${entry.linked ? " (link)" : ""}${away}`;
   };
   return removals.map((removal) => [displayLine(removal.name), ...removal.entries.map(line)].join("\n")).join("\n\n");
@@ -183,11 +185,17 @@ async function removeEntries(removals: Removal[], short: Short): Promise<{ remov
   const failures: string[] = [];
   for (const removal of removals) {
     const before = failures.length;
+    let linkFailed = false;
     for (const entry of removal.entries) {
+      if (linkFailed && !entry.linked) {
+        failures.push(`✗ ${short(entry.path)}: kept, because a link to it could not be removed`);
+        continue;
+      }
       try {
         await rm(entry.path, { recursive: true, force: true });
       } catch (err) {
         failures.push(`✗ ${short(entry.path)}: ${displayLine((err instanceof Error && err.message) || String(err))}`);
+        if (entry.linked) linkFailed = true;
       }
     }
     if (failures.length === before) removed.push(removal);
@@ -225,9 +233,9 @@ export async function runRemove(options: RemoveOptions, context: RemoveContext):
   const chosen = await chooseRemovals(removals, options, environment, ui, short);
   if (chosen === CANCELLED) return cancelled(ui);
 
-  const { outside, refusals } = await vetRemovals(chosen, environment, { global: options.global, yes });
-  if (refusals.length > 0) throw new CliError(["Nothing was removed:", ...refusals.map(displayLine)].join("\n"));
-  ui.note(summary(chosen, outside, short), "Removal Summary");
+  const vetting = await vetRemovals(chosen, environment, { global: options.global, yes });
+  if (vetting.refusals.length > 0) throw new CliError(["Nothing was removed:", ...vetting.refusals.map(displayLine)].join("\n"));
+  ui.note(summary(chosen, vetting, short), "Removal Summary");
   if (!yes) {
     const proceed = await ui.confirm(`Remove ${plural(chosen.length, "skill")}?`);
     if (proceed === CANCELLED || !proceed) return cancelled(ui);
