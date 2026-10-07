@@ -1,6 +1,6 @@
 {
   "name": "skillsgist",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Install Agent Skills from a skillsgist registry without storing its install key.",
   "keywords": [
     "agent-skills",
