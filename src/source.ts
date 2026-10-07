@@ -7,7 +7,7 @@ export interface Source {
   display: string;
 }
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const FIRST_TWO_SEGMENTS = /^\/([^/]+)\/([^/]+)/;
 const ANY_KEY_SEGMENT =
   /(?<![\w.~/\\-])((?:[a-z][a-z0-9+.-]*:\/\/[^\s/?#"'`<>]+|\[[0-9a-f:.]+\]|localhost|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::\d+)?\/+i\/+)([^/\s?#"'`<>]+)/gi;

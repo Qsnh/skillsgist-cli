@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AuthError } from "../src/http.js";
 import { DISCOVERY_SCHEMA, MAX_ARTIFACT_BYTES, MAX_INDEX_BYTES, downloadArtifact, fetchIndex, indexCandidates, parseIndex } from "../src/registry.js";
 import { parseSource } from "../src/source.js";
-import { publishIndex, skillZip, startRegistry, type Route, type TestRegistry } from "./helpers/registry.js";
+import { INSTALL_KEY, LOGIN_TOKEN, publishIndex, skillZip, startRegistry, type Route, type TestRegistry } from "./helpers/registry.js";
 
 let registry: TestRegistry;
 
@@ -14,6 +15,7 @@ afterAll(() => registry.close());
 beforeEach(() => {
   registry.routes.clear();
   registry.requests.length = 0;
+  registry.log.length = 0;
 });
 
 async function failure(promise: Promise<unknown>): Promise<string> {
@@ -259,5 +261,39 @@ describe("downloadArtifact", () => {
       }),
     );
     expect(message).toMatch(/larger than/);
+  });
+});
+
+describe("credentials on registry requests", () => {
+  it("sends the given headers with the index and the artifact, and none by default", async () => {
+    publishIndex(registry, "/p/team", [{ name: "demo-skill", zip: skillZip("demo-skill") }]);
+    const headers = { authorization: `Bearer ${LOGIN_TOKEN}` };
+    const index = await fetchIndex(teamSource(), { headers });
+    await downloadArtifact(index!.skills[0], { headers });
+    expect(registry.log.map((entry) => entry.headers.authorization)).toEqual([`Bearer ${LOGIN_TOKEN}`, `Bearer ${LOGIN_TOKEN}`]);
+    registry.log.length = 0;
+    await fetchIndex(teamSource());
+    expect(registry.log[0].headers.authorization).toBeUndefined();
+  });
+
+  it.each([
+    [401, JSON.stringify({ error: "invalid_token" }), "invalid_token", null],
+    [403, JSON.stringify({ error: "wrong_project", project: "other" }), "wrong_project", "other"],
+    [401, "nope", null, null],
+  ])("turns HTTP %i from the index into an AuthError without the token in it", async (status, body, code, project) => {
+    registry.routes.set(indexPath, { status, body, type: "application/json" });
+    const err = await fetchIndex(teamSource(), { headers: { authorization: `Bearer ${INSTALL_KEY}` } }).catch((caught: unknown) => caught);
+    expect(err).toBeInstanceOf(AuthError);
+    expect(err).toMatchObject({ status, code, project, message: `${registry.origin}${indexPath} answered HTTP ${status}` });
+    expect((err as Error).message).not.toContain(INSTALL_KEY);
+  });
+
+  it("turns HTTP 403 from an artifact into an AuthError", async () => {
+    const path = `/p/team/d/demo-skill/${"0".repeat(64)}.zip`;
+    registry.routes.set(path, { status: 403, type: "application/json", body: JSON.stringify({ error: "project_not_granted", project: "team" }) });
+    const err = await downloadArtifact({ name: "demo-skill", description: "Demo.", url: `${registry.origin}${path}`, digest: `sha256:${"0".repeat(64)}` }).catch(
+      (caught: unknown) => caught,
+    );
+    expect(err).toMatchObject({ status: 403, code: "project_not_granted", project: "team" });
   });
 });

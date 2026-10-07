@@ -1,10 +1,20 @@
 import { createHash } from "node:crypto";
-import { createServer } from "node:http";
+import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
 import { strToU8, zipSync } from "fflate";
 import { DISCOVERY_SCHEMA } from "../../src/registry.js";
 
 export const PROJECT = "team";
+export const INSTALL_KEY = "sgi_0123456789abcdef0123456789abcdef";
+export const LOGIN_TOKEN = "sgd_fedcba9876543210fedcba9876543210";
+export const LOGIN_TOKEN_2 = "sgd_00112233445566778899aabbccddeeff";
+
+export interface RecordedRequest {
+  method: string;
+  path: string;
+  headers: IncomingHttpHeaders;
+  body: string;
+}
 
 export interface Route {
   status?: number;
@@ -16,11 +26,13 @@ export interface Route {
   waitFor?: () => Promise<unknown>;
   trickle?: { pieces: number; everyMs: number };
   hangUpAfterBytes?: number;
+  handler?: (request: RecordedRequest) => Route | Promise<Route>;
 }
 
 export interface TestRegistry {
   origin: string;
   requests: string[];
+  log: RecordedRequest[];
   routes: Map<string, Route>;
   close(): Promise<void>;
 }
@@ -33,24 +45,10 @@ export interface Published {
 export async function startRegistry(): Promise<TestRegistry> {
   const routes = new Map<string, Route>();
   const requests: string[] = [];
+  const log: RecordedRequest[] = [];
   const server = createServer((req, res) => {
     const path = (req.url ?? "/").split("?")[0];
     requests.push(path);
-    const route = routes.get(path);
-    const send = () => {
-      if (!route) {
-        res.writeHead(404, { "content-type": "text/plain" });
-        res.end("not found");
-        return;
-      }
-      res.writeHead(route.status ?? 200, { "content-type": route.type ?? "application/octet-stream", ...route.headers });
-      if (route.bodyDelayMs) {
-        res.flushHeaders();
-        setTimeout(() => sendBody(route), route.bodyDelayMs);
-      } else {
-        sendBody(route);
-      }
-    };
     const sendBody = (route: Route) => {
       const body = Buffer.from(route.body);
       if (route.hangUpAfterBytes !== undefined) {
@@ -72,15 +70,39 @@ export async function startRegistry(): Promise<TestRegistry> {
         res.end(route.body);
       }
     };
-    if (route?.waitFor) void route.waitFor().then(send);
-    else if (route?.delayMs) setTimeout(send, route.delayMs);
-    else send();
+    const send = (route: Route | undefined) => {
+      if (!route) {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end("not found");
+        return;
+      }
+      res.writeHead(route.status ?? 200, { "content-type": route.type ?? "application/octet-stream", ...route.headers });
+      if (route.bodyDelayMs) {
+        res.flushHeaders();
+        setTimeout(() => sendBody(route), route.bodyDelayMs);
+      } else {
+        sendBody(route);
+      }
+    };
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const recorded: RecordedRequest = { method: req.method ?? "GET", path, headers: req.headers, body: Buffer.concat(chunks).toString("utf8") };
+      log.push(recorded);
+      const found = routes.get(path);
+      void Promise.resolve(found?.handler ? found.handler(recorded) : found).then((route) => {
+        if (route?.waitFor) void route.waitFor().then(() => send(route));
+        else if (route?.delayMs) setTimeout(() => send(route), route.delayMs);
+        else send(route);
+      });
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
     origin: `http://127.0.0.1:${port}`,
     requests,
+    log,
     routes,
     close: () =>
       new Promise<void>((resolve) => {
@@ -120,4 +142,25 @@ export function publishIndex(
     type: "application/json",
     body: JSON.stringify({ $schema: DISCOVERY_SCHEMA, skills: [...entries, ...(options.overrides ?? [])] }),
   });
+}
+
+// Like the server: without a token the index lists no skills (none are public)
+// and artifacts are missing; a token not in `tokens` gets 401 invalid_token.
+export function publishPrivate(registry: TestRegistry, basePath: string, skills: Published[], tokens: string[]): void {
+  publishIndex(registry, basePath, skills);
+  for (const [path, open] of [...registry.routes]) {
+    if (!path.startsWith(`${basePath}/`) || open.handler) continue;
+    registry.routes.set(path, {
+      body: "",
+      handler: ({ headers }) => {
+        const token = /^Bearer (.+)$/.exec(headers.authorization ?? "")?.[1];
+        if (token === undefined) {
+          return path.endsWith("/index.json")
+            ? { type: "application/json", body: JSON.stringify({ $schema: DISCOVERY_SCHEMA, skills: [] }) }
+            : { status: 404, body: "not found" };
+        }
+        return tokens.includes(token) ? open : { status: 401, type: "application/json", body: JSON.stringify({ error: "invalid_token" }) };
+      },
+    });
+  }
 }
