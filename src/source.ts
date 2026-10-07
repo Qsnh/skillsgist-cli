@@ -13,7 +13,7 @@ const ANY_KEY_SEGMENT =
   /(?<![\w.~/\\-])((?:[a-z][a-z0-9+.-]*:\/\/[^\s/?#"'`<>]+|\[[0-9a-f:.]+\]|localhost|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::\d+)?\/+i\/+)([^/\s?#"'`<>]+)/gi;
 const PREFIXED_TOKEN = /(?<![A-Za-z0-9_])(sg[dit]_)[A-Za-z0-9_-]{8,}/g;
 const MIN_SECRET = 8;
-const UNPRINTABLE = /[\p{Cc}‪-‮⁦-⁩]/gu;
+const UNPRINTABLE = /[\p{Cc}\u202a-\u202e\u2066-\u2069]/gu;
 const secrets = new Set<string>();
 
 export function maskKey(key: string): string {
