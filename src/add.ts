@@ -1,7 +1,9 @@
-import { agentFilter, agentsById, detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
+import { agentFilter, agentsById, detectRunningAgent, loadAgents, type Agent, type RunningAgent } from "./agents.js";
 import { unpackSkill, type SkillFiles } from "./archive.js";
+import { authHeaders, resolveCredential, type Credential } from "./auth.js";
 import { CliError } from "./errors.js";
 import { plural } from "./format.js";
+import { AuthError } from "./http.js";
 import {
   canonicalSkillDir,
   installSkill,
@@ -14,9 +16,10 @@ import {
   type Locator,
   type SkillResult,
 } from "./installer.js";
+import { configOf, hostOf, signIn, signInUrl, type AccountContext } from "./login.js";
 import { shortPath } from "./paths.js";
-import { downloadArtifact, fetchIndex, type FetchOptions, type SkillEntry } from "./registry.js";
-import { parseSource } from "./source.js";
+import { downloadArtifact, fetchIndex, type FetchOptions, type Index, type SkillEntry } from "./registry.js";
+import { parseSource, type Source } from "./source.js";
 
 export const CANCELLED: unique symbol = Symbol("cancelled");
 
@@ -54,15 +57,7 @@ export interface AddOptions {
   list: boolean;
 }
 
-export interface AddContext {
-  ui: Ui;
-  home: string;
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  interactive: boolean;
-  exists?: Exists;
-  fetch?: FetchOptions;
-}
+export type AddContext = AccountContext;
 
 export const DEFAULT_AGENTS = ["claude-code", "opencode", "codex"];
 
@@ -93,12 +88,12 @@ function sharedNames(agents: Agent[]): string[] {
   return agents.filter((agent) => agent.canonical && !agent.hidden).map((agent) => agent.displayName);
 }
 
-async function chooseSkills(all: SkillEntry[], options: AddOptions, yes: boolean, ui: Ui): Promise<Cancellable<SkillEntry[]>> {
+async function chooseSkills(all: SkillEntry[], options: AddOptions, yes: boolean, ui: Ui, hint: string): Promise<Cancellable<SkillEntry[]>> {
   if (options.skills) {
     const wanted = unique(options.skills.filter((name) => name !== "*").map((name) => name.toLowerCase()));
     const missing = wanted.filter((name) => !all.some((skill) => skill.name === name));
     if (missing.length > 0) {
-      throw new CliError(`No skill named ${missing.join(", ")} in this registry. Available: ${all.map((skill) => skill.name).join(", ")}`);
+      throw new CliError(`No skill named ${missing.join(", ")} in this registry. Available: ${all.map((skill) => skill.name).join(", ")}${hint}`);
     }
     return options.skills.includes("*") ? all : all.filter((skill) => wanted.includes(skill.name));
   }
@@ -241,6 +236,79 @@ function report(results: SkillResult[], install: InstallOptions, ui: Ui): void {
   if (failures.length > 0) ui.error([`Failed to install ${failures.length}`, ...failures].join("\n"));
 }
 
+interface Loaded {
+  index: Index | null;
+  credential: Credential;
+}
+
+function loginCommand(source: Source): string {
+  return `npx skillsgist login ${signInUrl(source)}`;
+}
+
+function credentialFor(source: Source, context: AddContext): Credential {
+  try {
+    return resolveCredential(source.origin, configOf(context));
+  } catch (err) {
+    if (!(err instanceof CliError)) throw err;
+    context.ui.warn(`${err.message} Continuing without signing in.`);
+    return { kind: "none" };
+  }
+}
+
+function explain(err: AuthError, credential: Credential, source: Source): CliError {
+  const host = hostOf(source.origin);
+  if (credential.kind === "env" && err.status === 401) return new CliError(`SKILLSGIST_INSTALL_KEY was rejected by ${host}: it was reset or revoked`);
+  if (credential.kind === "env" && err.code === "wrong_project") {
+    return new CliError(`SKILLSGIST_INSTALL_KEY is for project ${err.project ?? "another project"}, not ${source.project ?? source.display}`);
+  }
+  if (credential.kind === "login" && err.status === 401) return new CliError(`Your sign-in to ${host} has expired or was revoked. Run: ${loginCommand(source)}`);
+  if (credential.kind === "login" && err.code === "project_not_granted") {
+    const project = err.project ?? source.project ?? "";
+    return new CliError(`Your sign-in to ${host} does not cover project ${project}. Run: npx skillsgist login ${source.origin}/p/${encodeURIComponent(project)}`);
+  }
+  if (credential.kind === "none") return new CliError(`${err.message}. Private skills need a sign-in: ${loginCommand(source)}`);
+  return err;
+}
+
+async function offerSignIn(question: string, source: Source, context: AddContext, yes: boolean): Promise<Credential | null> {
+  if (yes || !context.interactive) return null;
+  const answer = await context.ui.confirm(question);
+  if (answer === CANCELLED || !answer) return null;
+  const login = await signIn(source, context, { browser: true });
+  return { kind: "login", token: login.token, user: login.user, projects: login.projects };
+}
+
+async function loadIndex(source: Source, context: AddContext, yes: boolean): Promise<Loaded> {
+  const host = hostOf(source.origin);
+  let credential = credentialFor(source, context);
+  if (credential.kind === "none" && source.project !== null) {
+    context.ui.info(`Public skills only. To include private ones, run: ${loginCommand(source)}`);
+  }
+  for (let retried = false; ; retried = true) {
+    let index: Index | null;
+    try {
+      index = await fetchIndex(source, { ...context.fetch, headers: authHeaders(credential) });
+    } catch (err) {
+      if (!(err instanceof AuthError)) throw err;
+      const fixable = !retried && credential.kind !== "env" && (err.status === 401 || err.code === "project_not_granted");
+      const question =
+        err.code === "project_not_granted"
+          ? `Your sign-in does not cover project ${err.project ?? source.project}. Sign in again to add it?`
+          : credential.kind === "none"
+            ? `${host} asks you to sign in. Sign in now?`
+            : `Your sign-in to ${host} has expired. Sign in again now?`;
+      const next = fixable ? await offerSignIn(question, source, context, yes) : null;
+      if (next === null) throw explain(err, credential, source);
+      credential = next;
+      continue;
+    }
+    if ((index !== null && index.skills.length > 0) || credential.kind !== "none" || retried) return { index, credential };
+    const next = await offerSignIn(`No public skills at ${source.display}. Sign in to ${host} to see private ones?`, source, context, yes);
+    if (next === null) return { index, credential };
+    credential = next;
+  }
+}
+
 export async function runAdd(url: string, options: AddOptions, context: AddContext): Promise<number> {
   const { ui } = context;
   const source = parseSource(url);
@@ -256,9 +324,13 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
   }
   ui.step(`Source: ${source.display}`);
 
-  const index = await fetchIndex(source, context.fetch);
+  const { index, credential } = await loadIndex(source, context, yes);
   for (const warning of index?.warnings ?? []) ui.warn(warning);
-  if (index === null || index.skills.length === 0) throw new CliError(`No skills found at ${source.display}`);
+  const anonymous = credential.kind === "none";
+  if (index === null || index.skills.length === 0) {
+    const hint = anonymous ? `. If they are private, sign in first (${loginCommand(source)}) or set SKILLSGIST_HOST and SKILLSGIST_INSTALL_KEY` : "";
+    throw new CliError(`No skills found at ${source.display}${hint}`);
+  }
   ui.step(`Found ${plural(index.skills.length, "skill")}`);
 
   if (options.list) {
@@ -267,7 +339,7 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
     return 0;
   }
 
-  const skills = await chooseSkills(index.skills, options, yes, ui);
+  const skills = await chooseSkills(index.skills, options, yes, ui, anonymous ? `. Private skills need a sign-in: ${loginCommand(source)}` : "");
   if (skills === CANCELLED) return cancelled(ui);
   const agents = loadAgents({ home: context.home, cwd: context.cwd, env: context.env, exists: context.exists });
   const chosen = await chooseAgents(agents, options, yes, running, ui);
@@ -284,7 +356,12 @@ export async function runAdd(url: string, options: AddOptions, context: AddConte
     if (proceed === CANCELLED || !proceed) return cancelled(ui);
   }
 
-  const payloads = await downloadAll(skills, context.fetch);
+  let payloads: Payload[];
+  try {
+    payloads = await downloadAll(skills, { ...context.fetch, headers: authHeaders(credential) });
+  } catch (err) {
+    throw err instanceof AuthError ? explain(err, credential, source) : err;
+  }
 
   const results: SkillResult[] = [];
   for (const payload of payloads) results.push(await installSkill(payload.name, payload.files, targets, install, where));

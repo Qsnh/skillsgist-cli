@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, filesContaining, tempDir } from "./helpers/fs.js";
 import { installFakeAuth } from "./helpers/oauth.js";
-import { LOGIN_TOKEN, publishIndex, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
+import { INSTALL_KEY, LOGIN_TOKEN, publishIndex, publishPrivate, skillZip, startRegistry, type TestRegistry } from "./helpers/registry.js";
 
 const CLI = resolve("dist/cli.js");
 const RECORDER = pathToFileURL(resolve("test/fixtures/record-connections.mjs")).href;
@@ -63,6 +63,7 @@ beforeAll(async () => {
   const demo = { name: "demo-skill", zip: skillZip("demo-skill", { "references/api.md": "api", "scripts/run.sh": "echo run" }) };
   publishIndex(registry, `/p/team`, [demo, { name: "other-skill", zip: skillZip("other-skill") }]);
   publishIndex(registry, `/p/team/.well-known/agent-skills/demo-skill`, [demo]);
+  publishPrivate(registry, "/p/secret", [{ name: "secret-skill", zip: skillZip("secret-skill") }], [LOGIN_TOKEN, INSTALL_KEY]);
 });
 
 afterAll(() => registry.close());
@@ -101,6 +102,10 @@ function run(box: Sandbox, args: string[], env: Record<string, string> = {}): Pr
 }
 
 function expectNoLeak(box: Sandbox, result: Result): void {
+  for (const secret of [LOGIN_TOKEN, INSTALL_KEY]) {
+    expect(result.output).not.toContain(secret);
+    expect(filesContaining(box.cwd, secret)).toEqual([]);
+  }
   const registryHost = new URL(registry.origin).host;
   expect(result.connections.filter((connection) => connection !== registryHost)).toEqual([]);
 }
@@ -433,5 +438,58 @@ describe("signing in", () => {
     const result = await run(sandbox(), ["login"]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("Missing the registry URL");
+  });
+});
+
+describe("installing private skills", () => {
+  it("installs with the sign-in login saved, and keeps the token only in the credentials file", async () => {
+    const box = sandbox();
+    installFakeAuth(registry, { projects: ["secret"] });
+    expect((await run(box, ["login", `${registry.origin}/p/secret`])).code).toBe(0);
+    const result = await run(box, ["add", `${registry.origin}/p/secret`, "-y"]);
+    expect(result.code).toBe(0);
+    expect(existsSync(join(box.cwd, ".agents/skills/secret-skill/SKILL.md"))).toBe(true);
+    expect(filesContaining(box.home, LOGIN_TOKEN)).toEqual([join(box.home, ".config/skillsgist/credentials.json")]);
+    expectNoLeak(box, result);
+  });
+
+  it("installs with an install key from the environment and writes nothing to the home directory", async () => {
+    const box = sandbox();
+    const result = await run(box, ["add", `${registry.origin}/p/secret`, "-y"], { SKILLSGIST_HOST: registry.origin, SKILLSGIST_INSTALL_KEY: INSTALL_KEY });
+    expect(result.code).toBe(0);
+    expect(existsSync(join(box.cwd, ".agents/skills/secret-skill/SKILL.md"))).toBe(true);
+    expect(readdirSync(box.home)).toEqual([]);
+    expectNoLeak(box, result);
+  });
+
+  it("does not send the install key to a registry SKILLSGIST_HOST does not name", async () => {
+    const box = sandbox();
+    registry.log.length = 0;
+    const result = await run(box, ["add", `${registry.origin}/p/secret`, "-y"], {
+      SKILLSGIST_HOST: "https://elsewhere.example",
+      SKILLSGIST_INSTALL_KEY: INSTALL_KEY,
+    });
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("not sending SKILLSGIST_INSTALL_KEY");
+    expect(result.output).toContain(`npx skillsgist login ${registry.origin}/p/secret`);
+    expect(registry.log.filter((entry) => entry.headers.authorization !== undefined)).toEqual([]);
+    expectNoLeak(box, result);
+  });
+
+  it("refuses an install-key address without connecting anywhere", async () => {
+    const box = sandbox();
+    const key = "0123456789abcdef0123456789abcdef";
+    const result = await run(box, ["add", `${registry.origin}/i/${key}`, "-y"]);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("Install keys no longer go in the URL");
+    expect(result.output).not.toContain(key);
+    expect(result.connections).toEqual([]);
+  });
+
+  it("fails at once inside an agent when the skills need a sign-in", async () => {
+    const box = sandbox();
+    const result = await run(box, ["add", `${registry.origin}/p/secret`], { CLAUDECODE: "1" });
+    expect(result.code).toBe(1);
+    expect(result.output).toContain(`npx skillsgist login ${registry.origin}/p/secret`);
   });
 });
