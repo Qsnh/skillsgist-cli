@@ -20,11 +20,17 @@ export interface ListOptions {
 
 export type ListScope = "project" | "global";
 
+export interface InstalledEntry {
+  path: string;
+  linked: boolean;
+}
+
 export interface InstalledSkill {
   name: string;
   scope: ListScope;
   path: string;
   agents: Agent[];
+  entries: InstalledEntry[];
 }
 
 export interface Listing {
@@ -58,6 +64,7 @@ interface Found {
 
 const byId = compareBy((agent: Agent) => agent.id);
 const byName = compareBy((item: { name: string }) => item.name);
+const byPath = compareBy((entry: InstalledEntry) => entry.path);
 
 export function listedScopes(options: ListOptions): ListScope[] {
   if (options.global === options.project) return ["project", "global"];
@@ -138,13 +145,20 @@ async function scanScope(scope: Scope, folders: Folder[], scan: Scan, skip: Prom
   );
   const byFolder = new Map<string, InstalledSkill>();
   for (const found of scanned.flat().sort((a, b) => Number(a.linked) - Number(b.linked))) {
+    const entry: InstalledEntry = { path: found.path, linked: found.linked };
     const existing = byFolder.get(found.real);
-    if (existing === undefined) byFolder.set(found.real, { name: found.name, scope: listed, path: found.path, agents: [...found.agents] });
-    else for (const agent of found.agents) if (!existing.agents.includes(agent)) existing.agents.push(agent);
+    if (existing === undefined) byFolder.set(found.real, { name: found.name, scope: listed, path: found.path, agents: [...found.agents], entries: [entry] });
+    else {
+      existing.entries.push(entry);
+      for (const agent of found.agents) if (!existing.agents.includes(agent)) existing.agents.push(agent);
+    }
   }
   const result = [...byFolder.values()];
   result.sort(byName);
-  for (const skill of result) skill.agents.sort(byId);
+  for (const skill of result) {
+    skill.agents.sort(byId);
+    skill.entries.sort((a, b) => Number(a.linked) - Number(b.linked) || byPath(a, b));
+  }
   return result;
 }
 
