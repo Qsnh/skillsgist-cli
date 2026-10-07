@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -330,5 +330,81 @@ describe("skillsgist list", () => {
     const code = await new Promise<number | null>((done) => child.on("close", done));
     expect(stderr).toBe("");
     expect(code).toBe(0);
+  });
+});
+
+describe("skillsgist remove", () => {
+  const present = (path: string) => lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+
+  async function installed(box: Sandbox): Promise<Result> {
+    const added = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-y", "-a", "claude-code"]);
+    expect(added.code).toBe(0);
+    return added;
+  }
+
+  it("removes a named skill's folder and link with -y, without touching the network", async () => {
+    const box = sandbox();
+    const added = await installed(box);
+    const result = await run(box, ["remove", "demo-skill", "-y"]);
+    expect(result.code).toBe(0);
+    expect(result.output).toContain("✓ demo-skill");
+    expect(present(join(box.cwd, ".agents/skills/demo-skill"))).toBe(false);
+    expect(present(join(box.cwd, ".claude/skills/demo-skill"))).toBe(false);
+    const listed = await run(box, ["list", "-p", "--json"]);
+    expect((JSON.parse(listed.stdout) as Array<{ name: string }>).map((row) => row.name)).toEqual(["other-skill"]);
+    expect(result.connections).toEqual(added.connections);
+    expect(result.output).not.toContain(KEY);
+    expect(result.output).not.toContain("\x1b");
+  });
+
+  it("needs -y without a terminal, but not inside an agent", async () => {
+    const box = sandbox();
+    await installed(box);
+    const before = sandboxSnapshot(box);
+    const refused = await run(box, ["remove", "demo-skill"]);
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain("There is no terminal");
+    expect(sandboxSnapshot(box)).toEqual(before);
+
+    const inside = await run(box, ["remove", "demo-skill"], { CLAUDECODE: "1" });
+    expect(inside.code).toBe(0);
+    expect(inside.output).toContain("Claude Code detected — removing non-interactively");
+    expect(present(join(box.cwd, ".agents/skills/demo-skill"))).toBe(false);
+    expect(present(join(box.cwd, ".claude/skills/demo-skill"))).toBe(false);
+  });
+
+  it("removes every project skill with --all, and rejects an unknown name or a name next to --all", async () => {
+    const box = sandbox();
+    await installed(box);
+    const home = sandboxSnapshot(box).home;
+    const all = await run(box, ["rm", "--all"]);
+    expect(all.code).toBe(0);
+    expect(readdirSync(join(box.cwd, ".agents/skills"))).toEqual([]);
+    expect(readdirSync(join(box.cwd, ".claude/skills"))).toEqual([]);
+    expect(sandboxSnapshot(box).home).toEqual(home);
+
+    const unknown = await run(box, ["rm", "nope", "-y"]);
+    expect(unknown.code).toBe(1);
+    expect(unknown.output).toContain("Not installed in the project: nope");
+
+    const mixed = await run(box, ["remove", "--all", "demo-skill"]);
+    expect(mixed.code).toBe(1);
+    expect(mixed.stderr).toContain("Cannot combine");
+    expect(mixed.stderr).toContain("Usage:");
+  });
+
+  it("leaves the project's own skills folder alone under --all when a skills directory links to it", async () => {
+    const box = sandbox();
+    mkdirSync(join(box.cwd, "skills/own"), { recursive: true });
+    writeFileSync(join(box.cwd, "skills/own/SKILL.md"), "---\nname: own\ndescription: Demo.\n---\n");
+    mkdirSync(join(box.cwd, ".claude"));
+    symlinkSync("../skills", join(box.cwd, ".claude/skills"));
+    const before = sandboxSnapshot(box);
+    const result = await run(box, ["remove", "--all"]);
+    expect(result.code).toBe(1);
+    expect(result.output).toContain("Skipping 1 skill:");
+    expect(result.output).toContain("Nothing was removed");
+    expect(existsSync(join(box.cwd, "skills/own/SKILL.md"))).toBe(true);
+    expect(sandboxSnapshot(box)).toEqual(before);
   });
 });

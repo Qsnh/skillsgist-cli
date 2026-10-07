@@ -332,6 +332,53 @@ ${"x".repeat(1024 * 1024)}
     expect(result.map((skill) => skill.name)).toEqual(["big"]);
   });
 
+  it("records the canonical folder and its link to it as separate entries", async () => {
+    const { home, cwd, environment, install } = setup();
+    mkdirSync(join(home, ".claude"));
+    await install("demo-skill", ["claude-code"]);
+    const result = await findInstalledSkills(environment(), listOptions());
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].entries).toEqual([
+      { path: join(cwd, ".agents/skills/demo-skill"), linked: false },
+      { path: join(cwd, ".claude/skills/demo-skill"), linked: true },
+    ]);
+  });
+
+  it("gives each --copy row its own single real entry", async () => {
+    const { cwd, environment, install } = setup();
+    await install("demo-skill", ["claude-code", "goose"], { copy: true });
+    const result = await findInstalledSkills(environment(), listOptions());
+    expect(result.skills.map((skill) => skill.entries)).toEqual([
+      [{ path: join(cwd, ".claude/skills/demo-skill"), linked: false }],
+      [{ path: join(cwd, ".goose/skills/demo-skill"), linked: false }],
+    ]);
+  });
+
+  it("gives a link to a folder outside every skills directory its own single entry", async () => {
+    const { root, cwd, environment } = setup();
+    writeSkillMd(join(root, "elsewhere/demo-skill"), skillMd("demo-skill"));
+    mkdirSync(join(cwd, ".claude/skills"), { recursive: true });
+    const link = join(cwd, ".claude/skills/demo-skill");
+    symlinkSync(join(root, "elsewhere/demo-skill"), link);
+    const result = await findInstalledSkills(environment(), listOptions());
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].entries).toEqual([{ path: link, linked: true }]);
+  });
+
+  it("keeps an undetected OpenClaw's link in the canonical row's entries, and leaves the project's own folder out of every row", async () => {
+    const { cwd, environment, install } = setup();
+    writeSkillMd(join(cwd, "skills/own"), skillMd("own"));
+    await install("demo-skill", ["openclaw"]);
+    const result = await findInstalledSkills(environment(), listOptions());
+    expect(result.skills.some((skill) => skill.name === "own")).toBe(false);
+    const row = result.skills.find((skill) => skill.name === "demo-skill")!;
+    expect(row.path).toBe(join(cwd, ".agents/skills/demo-skill"));
+    expect(row.entries).toEqual([
+      { path: join(cwd, ".agents/skills/demo-skill"), linked: false },
+      { path: join(cwd, "skills/demo-skill"), linked: true },
+    ]);
+  });
+
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("lists what it can read and names the folders it cannot", async () => {
     const { cwd, environment } = setup();
     writeSkillMd(join(cwd, ".agents/skills/readable"), skillMd("readable"));
@@ -356,7 +403,13 @@ describe("formatInstalledSkills", () => {
     const agents = loadAgents({ home: "/h", cwd: "/w", env: {}, exists: () => false });
     return ids.map((id) => agents.find((agent) => agent.id === id)!);
   };
-  const skill = (name: string, scope: ListScope, path: string, ids: string[] = []): InstalledSkill => ({ name, scope, path, agents: agentsOf(...ids) });
+  const skill = (name: string, scope: ListScope, path: string, ids: string[] = []): InstalledSkill => ({
+    name,
+    scope,
+    path,
+    agents: agentsOf(...ids),
+    entries: [{ path, linked: false }],
+  });
 
   it("says nothing is installed, per requested scope", () => {
     expect(formatInstalledSkills([], listOptions(), place)).toBe("No project skills\n\nNo global skills\n");
@@ -444,6 +497,12 @@ describe("formatInstalledSkills", () => {
 
   it("prints an empty JSON array when nothing is installed", () => {
     expect(formatInstalledSkills([], listOptions({ json: true }), place)).toBe("[]\n");
+  });
+
+  it("keeps the JSON row's keys limited to name, path, scope, agents", () => {
+    const skills = [skill("demo-skill", "project", "/w/.agents/skills/demo-skill", ["claude-code"])];
+    const rows = JSON.parse(formatInstalledSkills(skills, listOptions({ json: true }), place));
+    expect(Object.keys(rows[0]).sort()).toEqual(["agents", "name", "path", "scope"]);
   });
 
   it("strips terminal escapes and keeps a name with a newline on one text row", () => {

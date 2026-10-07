@@ -1,4 +1,4 @@
-import { agentsById, detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
+import { agentFilter, agentsById, detectRunningAgent, loadAgents, type Agent, type Exists, type RunningAgent } from "./agents.js";
 import { unpackSkill, type SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
 import { plural } from "./format.js";
@@ -41,6 +41,7 @@ export interface Ui {
   selectSkills(skills: SkillEntry[]): Promise<Cancellable<SkillEntry[]>>;
   selectAgents(request: AgentRequest): Promise<Cancellable<string[]>>;
   selectScope(): Promise<Cancellable<boolean>>;
+  selectInstalled(skills: Array<{ name: string; path: string }>): Promise<Cancellable<number[]>>;
   confirm(message: string): Promise<Cancellable<boolean>>;
 }
 
@@ -83,8 +84,8 @@ function formatList(items: string[], max = 5): string {
   return items.length <= max ? items.join(", ") : `${items.slice(0, max).join(", ")} +${items.length - max} more`;
 }
 
-function cancelled(ui: Ui): number {
-  ui.cancel("Installation cancelled");
+export function cancelled(ui: Ui, message = "Installation cancelled"): number {
+  ui.cancel(message);
   return 0;
 }
 
@@ -113,8 +114,8 @@ async function chooseAgents(agents: Agent[], options: AddOptions, yes: boolean, 
     return { agents: [...picked, ...implied], implied: new Set(implied) };
   };
   if (options.agents) {
-    const named = pick(options.agents.filter((id) => id !== "*"));
-    return options.agents.includes("*") ? select([], agents) : select(named);
+    const filter = agentFilter(agents, options.agents);
+    return filter.named ? select(filter.agents) : select([], filter.agents);
   }
   if (running.inAgent) return select(running.id === null ? [] : pick([running.id]), universal);
   const installed = agents.filter((agent) => agent.installed);

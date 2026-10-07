@@ -35,6 +35,26 @@ describe("clackUi", () => {
     expect(hint).toBe(`${"x".repeat(56)}😀…`);
   });
 
+  it("offers installed skills to remove by index, each with its path", async () => {
+    multiselect.mockResolvedValue([1]);
+    const chosen = await clackUi().selectInstalled([
+      { name: "a", path: "./x/a" },
+      { name: "b", path: "./x/b" },
+    ]);
+    expect(chosen).toEqual([1]);
+    expect(multiselect.mock.lastCall![0].message).toBe("Select skills to remove");
+    expect(multiselect.mock.lastCall![0].options).toEqual([
+      { value: 0, label: "a", hint: "./x/a" },
+      { value: 1, label: "b", hint: "./x/b" },
+    ]);
+  });
+
+  it("cuts a long path hint when offering installed skills", async () => {
+    multiselect.mockResolvedValue([0]);
+    await clackUi().selectInstalled([{ name: "a", path: `./${"x".repeat(70)}` }]);
+    expect(multiselect.mock.lastCall![0].options[0].hint).toBe(`./${"x".repeat(55)}…`);
+  });
+
   it("writes errors to stderr", () => {
     clackUi().error("boom");
     expect(error).toHaveBeenCalledWith("boom", { output: process.stderr });

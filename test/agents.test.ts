@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectRunningAgent, loadAgents, skillsRoot, type Agent } from "../src/agents.js";
+import { agentFilter, detectRunningAgent, isAgentId, loadAgents, projectOwnedRoots, skillsRoot, type Agent } from "../src/agents.js";
 
 const none = () => false;
 const only = (...paths: string[]) => (path: string) => paths.includes(path);
@@ -93,6 +93,33 @@ describe("skillsRoot", () => {
   it("has no global folder for agents that cannot install globally", () => {
     expect(root("promptscript", true)).toBeNull();
     expect(root("promptscript", false)).toBe("/w/.agents/skills");
+  });
+});
+
+describe("agentFilter", () => {
+  const agents = load();
+  const ids = (filter: ReturnType<typeof agentFilter>) => filter.agents.map((agent) => agent.id);
+
+  it("keeps every agent without -a or with '*', and only the named ones otherwise", () => {
+    expect(agentFilter(agents, null)).toEqual({ agents, everyFolder: false, named: false });
+    expect(agentFilter(agents, ["*"])).toEqual({ agents, everyFolder: true, named: false });
+    expect(agentFilter(agents, ["*", "cursor"])).toEqual({ agents, everyFolder: true, named: false });
+    const named = agentFilter(agents, ["cursor", "claude-code", "cursor"]);
+    expect(ids(named)).toEqual(["cursor", "claude-code"]);
+    expect(named).toMatchObject({ everyFolder: true, named: true });
+  });
+
+  it("rejects unknown ids, even next to '*'", () => {
+    expect(() => agentFilter(agents, ["nope"])).toThrow(/^Invalid agents: nope\./);
+    expect(() => agentFilter(agents, ["*", "nope"])).toThrow(/^Invalid agents: nope\./);
+  });
+});
+
+describe("isAgentId and projectOwnedRoots", () => {
+  it("knows the agent ids, and the project folders OpenClaw and AstrBot keep their own skills in", () => {
+    expect(isAgentId("claude-code")).toBe(true);
+    expect(isAgentId("my-skill")).toBe(false);
+    expect(projectOwnedRoots("/w").sort()).toEqual(["/w/data/skills", "/w/skills"]);
   });
 });
 

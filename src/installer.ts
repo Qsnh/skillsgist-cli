@@ -1,10 +1,10 @@
 import type { Stats } from "node:fs";
 import { lstat, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { canonicalSkillsRoot, skillsRoot, type Agent } from "./agents.js";
+import { canonicalSkillsRoot, projectOwnedRoots, skillsRoot, type Agent } from "./agents.js";
 import type { SkillFiles } from "./archive.js";
-import { CliError } from "./errors.js";
-import { within } from "./paths.js";
+import { CliError, errorMessage } from "./errors.js";
+import { isInside } from "./paths.js";
 
 export interface InstallOptions {
   global: boolean;
@@ -17,6 +17,11 @@ export interface InstallOptions {
 export interface Locator {
   real(dir: string): Promise<string>;
   located(path: string): Promise<string>;
+}
+
+export interface ProjectGuard {
+  outside(path: string): Promise<string | null>;
+  owned(path: string): Promise<boolean>;
 }
 
 export interface InstalledAgent {
@@ -50,11 +55,6 @@ export function sanitizeName(name: string): string {
   );
 }
 
-function isInside(base: string, target: string): boolean {
-  const rest = within(base, target);
-  return rest !== null && rest !== "";
-}
-
 function inside(base: string, name: string): string {
   const target = join(base, sanitizeName(name));
   if (!isInside(base, target)) throw new CliError(`Refusing to install ${name} outside ${base}`);
@@ -84,26 +84,36 @@ export function locator(): Locator {
   return { real, located };
 }
 
+export function projectGuard(cwd: string, where: Locator): ProjectGuard {
+  const root = where.real(cwd);
+  const owned = Promise.all(projectOwnedRoots(cwd).map((dir) => where.real(dir))).then((dirs) => new Set(dirs));
+  return {
+    async outside(path) {
+      const place = await where.located(path);
+      return isInside(await root, place) ? null : place;
+    },
+    async owned(path) {
+      return (await owned).has(dirname(await where.located(path)));
+    },
+  };
+}
+
 const entry = (path: string): Promise<Stats | null> => lstat(path).catch(() => null);
 
-async function refusal(
-  dir: string,
-  agent: Agent | null,
-  canonicalPath: string,
-  options: InstallOptions,
-  where: Locator,
-  existing?: Stats | null,
-): Promise<string | null> {
-  if (options.global || options.confirmed) return null;
-  const real = await where.located(dir);
-  const shown = `.${sep}${relative(options.cwd, dir)}`;
-  if (!isInside(await where.real(options.cwd), real)) {
-    return `${shown} leads out of the project to ${real}; install from a terminal without -y to confirm`;
-  }
-  if (!agent?.projectOwned) return null;
-  const found = existing === undefined ? await entry(dir) : existing;
-  if (found === null || found.isSymbolicLink() || real === (await where.located(canonicalPath))) return null;
-  return `${shown} already exists and is not a link; remove it, or install from a terminal without -y to replace it`;
+type Refusal = (dir: string, existing?: Stats | null) => Promise<string | null>;
+
+function refuser(canonicalPath: string, options: InstallOptions, where: Locator): Refusal {
+  if (options.global || options.confirmed) return async () => null;
+  const guard = projectGuard(options.cwd, where);
+  return async (dir, existing) => {
+    const shown = `.${sep}${relative(options.cwd, dir)}`;
+    const away = await guard.outside(dir);
+    if (away !== null) return `${shown} leads out of the project to ${away}; install from a terminal without -y to confirm`;
+    if (!(await guard.owned(dir))) return null;
+    const found = existing === undefined ? await entry(dir) : existing;
+    if (found === null || found.isSymbolicLink() || (await where.located(dir)) === (await where.located(canonicalPath))) return null;
+    return `${shown} already exists and is not a link; remove it, or install from a terminal without -y to replace it`;
+  };
 }
 
 async function writeSkill(dir: string, files: SkillFiles): Promise<void> {
@@ -134,7 +144,7 @@ async function attempt(action: () => Promise<void>): Promise<string | null> {
     await action();
     return null;
   } catch (err) {
-    return (err instanceof Error && err.message) || String(err);
+    return errorMessage(err);
   }
 }
 
@@ -157,20 +167,20 @@ export async function installSkill(
     if (dir === null) results.push(unsupported(agent));
     else targets.push([agent, dir]);
   }
-  const guarded = async (dir: string, agent: Agent | null, action: () => Promise<void>) =>
-    (await refusal(dir, agent, canonicalPath, options, where)) ?? (await attempt(action));
+  const refusal = refuser(canonicalPath, options, where);
+  const guarded = async (dir: string, action: () => Promise<void>) => (await refusal(dir)) ?? (await attempt(action));
   if (options.copy) {
     const written = new Map<string, string | null>();
     for (const [agent, dir] of targets) {
-      if (!written.has(dir)) written.set(dir, await guarded(dir, agent, () => writeSkill(dir, files)));
+      if (!written.has(dir)) written.set(dir, await guarded(dir, () => writeSkill(dir, files)));
       const error = written.get(dir) ?? null;
       results.push(error !== null ? { agent, status: "failed", path: dir, error } : { agent, status: "copied", path: dir });
     }
     return { name, canonicalPath, agents: results };
   }
-  const canonicalError = await guarded(canonicalPath, null, () => writeSkill(canonicalPath, files));
+  const canonicalError = await guarded(canonicalPath, () => writeSkill(canonicalPath, files));
   for (const [agent, dir] of targets) {
-    const error = canonicalError ?? (dir === canonicalPath ? null : await refusal(dir, agent, canonicalPath, options, where));
+    const error = canonicalError ?? (dir === canonicalPath ? null : await refusal(dir));
     if (error !== null) {
       results.push({ agent, status: "failed", path: dir, error });
     } else if (dir === canonicalPath) {
@@ -185,33 +195,33 @@ export async function installSkill(
   return { name, canonicalPath, agents: results };
 }
 
-function targetDirs(name: string, agents: Agent[], options: InstallOptions): Map<string, Agent | null> {
-  const dirs = new Map<string, Agent | null>(options.copy ? [] : [[canonicalSkillDir(name, options), null]]);
+function targetDirs(name: string, agents: Agent[], options: InstallOptions): string[] {
+  const dirs = new Set<string>(options.copy ? [] : [canonicalSkillDir(name, options)]);
   for (const agent of agents) {
     const dir = agentSkillDir(agent, name, options);
-    if (dir !== null && !dirs.has(dir)) dirs.set(dir, agent);
+    if (dir !== null) dirs.add(dir);
   }
-  return dirs;
+  return [...dirs];
 }
 
 export async function replacedDirs(name: string, agents: Agent[], options: InstallOptions, where: Locator = locator()): Promise<string[]> {
   const canonicalPath = canonicalSkillDir(name, options);
-  const dirs = [...targetDirs(name, agents, options)];
+  const dirs = targetDirs(name, agents, options);
+  const refusal = refuser(canonicalPath, options, where);
   const replaced = await Promise.all(
-    dirs.map(async ([dir, agent]) => {
+    dirs.map(async (dir) => {
       const existing = await entry(dir);
       if (existing === null) return false;
       if (!options.copy && dir !== canonicalPath && (await where.real(dir)) === (await where.real(canonicalPath))) return false;
-      return (await refusal(dir, agent, canonicalPath, options, where, existing)) === null;
+      return (await refusal(dir, existing)) === null;
     }),
   );
-  return dirs.filter((_, index) => replaced[index]).map(([dir]) => dir);
+  return dirs.filter((_, index) => replaced[index]);
 }
 
 export async function outsideDirs(name: string, agents: Agent[], options: InstallOptions, where: Locator = locator()): Promise<Array<[string, string]>> {
   if (options.global) return [];
-  const root = await where.real(options.cwd);
-  const dirs = [...targetDirs(name, agents, options).keys()];
-  const found = await Promise.all(dirs.map(async (dir): Promise<[string, string]> => [dir, await where.located(dir)]));
-  return found.filter(([, real]) => !isInside(root, real));
+  const guard = projectGuard(options.cwd, where);
+  const found = await Promise.all(targetDirs(name, agents, options).map(async (dir): Promise<[string, string | null]> => [dir, await guard.outside(dir)]));
+  return found.filter((pair): pair is [string, string] => pair[1] !== null);
 }

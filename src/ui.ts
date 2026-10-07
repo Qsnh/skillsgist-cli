@@ -58,6 +58,15 @@ export function clackUi(): Ui {
         }),
       );
     },
+    async selectInstalled(skills: Array<{ name: string; path: string }>) {
+      return settle<number[]>(
+        await clack.multiselect({
+          message: show("Select skills to remove"),
+          options: skills.map((skill, index) => ({ value: index, label: show(skill.name), hint: hint(show(skill.path)) })),
+          required: true,
+        }),
+      );
+    },
     async confirm(message: string) {
       return settle<boolean>(await clack.confirm({ message: show(message) }));
     },

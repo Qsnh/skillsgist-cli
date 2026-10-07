@@ -6,6 +6,7 @@ import { parseCommandLine, USAGE } from "./args.js";
 import { CliError } from "./errors.js";
 import { listAgents } from "./list-agents.js";
 import { listSkills } from "./list-skills.js";
+import { runRemove } from "./remove.js";
 import { clackUi } from "./ui.js";
 
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -38,6 +39,9 @@ async function main(argv: string[]): Promise<number> {
       if (problems.length === 0) return 0;
       ui.error(problems.join("\n"));
       return 1;
+    }
+    if (command.kind === "remove") {
+      return await runRemove(command.options, { ui, home: homedir(), cwd: process.cwd(), env: process.env, interactive: Boolean(process.stdin.isTTY) });
     }
     return await runAdd(command.url, command.options, {
       ui,

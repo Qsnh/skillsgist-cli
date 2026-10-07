@@ -210,6 +210,27 @@ export function agentsById(agents: Agent[], ids: string[]): Agent[] {
   return unique.map((id) => byId.get(id) as Agent);
 }
 
+export interface AgentFilter {
+  agents: Agent[];
+  everyFolder: boolean;
+  named: boolean;
+}
+
+export function agentFilter(agents: Agent[], requested: string[] | null): AgentFilter {
+  if (requested === null) return { agents, everyFolder: false, named: false };
+  const named = agentsById(agents, requested.filter((id) => id !== "*"));
+  if (requested.includes("*")) return { agents, everyFolder: true, named: false };
+  return { agents: named, everyFolder: true, named: true };
+}
+
+export function isAgentId(id: string): boolean {
+  return AGENTS.some((agent) => agent.id === id);
+}
+
+export function projectOwnedRoots(cwd: string): string[] {
+  return AGENTS.filter((agent) => agent.projectOwned).map((agent) => join(cwd, agent.skillsDir));
+}
+
 export function canonicalSkillsRoot(scope: Scope): string {
   return join(scope.global ? scope.home : scope.cwd, CANONICAL_SKILLS_DIR);
 }
@@ -226,7 +247,7 @@ function declaredAgentName(env: NodeJS.ProcessEnv): string | null {
 }
 
 function runningAgentId(name: string): string | null {
-  return RUNNING_AGENT_IDS.get(name) ?? (AGENTS.some((agent) => agent.id === name) ? name : null);
+  return RUNNING_AGENT_IDS.get(name) ?? (isAgentId(name) ? name : null);
 }
 
 function signalledAgentName(env: NodeJS.ProcessEnv, exists: Exists): string | null {

@@ -8,6 +8,11 @@ export function within(base: string, target: string): string | null {
   return path.startsWith(prefix) ? path.slice(prefix.length) : null;
 }
 
+export function isInside(base: string, target: string): boolean {
+  const rest = within(base, target);
+  return rest !== null && rest !== "";
+}
+
 function under(path: string, base: string, mark: string): string | null {
   const rest = within(base, path);
   if (rest === null) return null;
