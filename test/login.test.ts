@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { chmodSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Ui } from "../src/add.js";
@@ -141,6 +141,53 @@ describe("runLogin", () => {
     );
     expect(registry.log).toEqual([]);
   });
+
+  it("revokes a different sign-in that was saved while this one was polling", async () => {
+    const auth = installFakeAuth(registry);
+    let first = true;
+    const box = account({
+      fetch: {
+        sleep: async () => {
+          if (first) {
+            first = false;
+            saveLogin(box.context, registry.origin, saved("sgd_concurrent00000000"));
+          }
+        },
+      },
+    });
+    expect(await runLogin(registry.origin, { browser: false }, box.context)).toBe(0);
+    expect(auth.revoked).toContain("sgd_concurrent00000000");
+    expect(getLogin(box.context, registry.origin)?.token).toBe(LOGIN_TOKEN);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("revokes the new sign-in when it cannot be saved", async () => {
+    const auth = installFakeAuth(registry);
+    const dir = tempDir();
+    chmodSync(dir, 0o500);
+    const box = account({ env: { SKILLSGIST_CONFIG_DIR: dir } });
+    try {
+      await expect(runLogin(registry.origin, { browser: false }, box.context)).rejects.toThrow(/^Could not save /);
+      expect(auth.revoked).toEqual([LOGIN_TOKEN]);
+    } finally {
+      chmodSync(dir, 0o700);
+    }
+  });
+
+  it("warns when an install key would still override this sign-in", async () => {
+    installFakeAuth(registry);
+    const box = account({ env: { SKILLSGIST_INSTALL_KEY: INSTALL_KEY, SKILLSGIST_HOST: registry.origin } });
+    expect(await runLogin(registry.origin, { browser: false }, box.context)).toBe(0);
+    expect(box.ui.text()).toContain("warn: SKILLSGIST_INSTALL_KEY is set for this registry and takes precedence over this sign-in in add");
+  });
+
+  it("gives plain instructions when the server has no pre-filled link", async () => {
+    installFakeAuth(registry, { device: { verification_uri_complete: undefined } });
+    const box = account();
+    expect(await runLogin(registry.origin, { browser: false }, box.context)).toBe(0);
+    expect(box.ui.text()).toContain(
+      `Open ${registry.origin}/device\nand enter the code BCDF-GHJK.\nThen tick the projects this computer may install from, and approve.`,
+    );
+  });
 });
 
 describe("runLogout", () => {
@@ -211,6 +258,23 @@ describe("runWhoami", () => {
     const box = account();
     expect(await runWhoami(null, box.context)).toBe(1);
     expect(box.ui.text()).toContain("Not signed in. Run: npx skillsgist login <url>");
+  });
+
+  it("warns about an install key with no SKILLSGIST_HOST, and still fails when nothing else is signed in", async () => {
+    const box = account({ env: { SKILLSGIST_INSTALL_KEY: INSTALL_KEY } });
+    expect(await runWhoami(null, box.context)).toBe(1);
+    expect(box.ui.text()).toContain("SKILLSGIST_INSTALL_KEY is set, but SKILLSGIST_HOST does not name a registry, so the key is never sent");
+  });
+
+  it("puts the unbound-key warning before the per-host lines when something else is signed in", async () => {
+    installFakeAuth(registry);
+    const box = account({ env: { SKILLSGIST_INSTALL_KEY: INSTALL_KEY } });
+    await runLogin(registry.origin, { browser: false }, box.context);
+    expect(await runWhoami(null, box.context)).toBe(0);
+    const text = box.ui.text();
+    expect(text.indexOf("SKILLSGIST_INSTALL_KEY is set, but SKILLSGIST_HOST does not name a registry")).toBeLessThan(
+      text.indexOf(`${registry.origin}: alice via sign-in`),
+    );
   });
 });
 

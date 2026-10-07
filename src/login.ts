@@ -51,7 +51,9 @@ export async function signIn(source: Source, context: AccountContext, options: L
   const device = await requestDeviceCode(meta, { projects, deviceName }, context.fetch);
   const link = device.verificationUriComplete ?? device.verificationUri;
   ui.message(
-    `Open ${link}\nand check that the page shows the code ${device.userCode}.\nThen tick the projects this computer may install from, and approve.`,
+    device.verificationUriComplete === null
+      ? `Open ${device.verificationUri}\nand enter the code ${device.userCode}.\nThen tick the projects this computer may install from, and approve.`
+      : `Open ${link}\nand check that the page shows the code ${device.userCode}.\nThen tick the projects this computer may install from, and approve.`,
   );
   if (options.browser && context.interactive && !detectRunningAgent(context.env, context.exists).inAgent) {
     (context.openBrowser ?? openBrowser)(link);
@@ -71,10 +73,23 @@ export async function signIn(source: Source, context: AccountContext, options: L
   }
   const now = context.fetch?.now ?? Date.now;
   const login: HostLogin = { user: identity.user, projects: identity.projects, token: grant.token, createdAt: new Date(now()).toISOString() };
-  saveLogin(config, source.origin, login);
-  if (previous !== null && previous.token !== login.token) {
+  // Re-read right before saving: the poll above can take minutes, during which another `login`
+  // for this same origin may have saved a different token. Revoke that one, not the stale `previous`.
+  const beforeSave = getLogin(config, source.origin);
+  if (beforeSave !== null) registerSecret(beforeSave.token);
+  try {
+    saveLogin(config, source.origin, login);
+  } catch (saveErr) {
     try {
-      await revokeToken(meta, previous.token, context.fetch);
+      await revokeToken(meta, grant.token, context.fetch);
+    } catch (revokeErr) {
+      ui.warn(`Could not revoke the new sign-in (${errorMessage(revokeErr)}). Revoke it at ${source.origin}/me`);
+    }
+    throw saveErr;
+  }
+  if (beforeSave !== null && beforeSave.token !== login.token) {
+    try {
+      await revokeToken(meta, beforeSave.token, context.fetch);
     } catch (err) {
       ui.warn(`Could not revoke this computer's previous sign-in (${errorMessage(err)}). Revoke it at ${source.origin}/me`);
     }
@@ -86,6 +101,9 @@ export async function runLogin(url: string, options: LoginOptions, context: Acco
   const source = parseSource(url);
   if (!detectRunningAgent(context.env, context.exists).inAgent) context.ui.intro("skillsgist login");
   const login = await signIn(source, context, options);
+  if (envCredential(source.origin, { ...configOf(context), warn: undefined }).kind === "env") {
+    context.ui.warn("SKILLSGIST_INSTALL_KEY is set for this registry and takes precedence over this sign-in in add");
+  }
   context.ui.outro(`Signed in to ${hostOf(source.origin)} as ${login.user} (${projectList(login.projects)})`);
   return 0;
 }
@@ -122,22 +140,27 @@ export async function runLogout(url: string | null, context: AccountContext): Pr
   return 0;
 }
 
+const UNBOUND_KEY = "SKILLSGIST_INSTALL_KEY is set, but SKILLSGIST_HOST does not name a registry, so the key is never sent";
+
 export async function runWhoami(url: string | null, context: AccountContext): Promise<number> {
   const { ui } = context;
   const config = configOf(context);
   let origins: string[];
+  let unbound = false;
   if (url !== null) {
     origins = [parseSource(url).origin];
   } else {
-    const envHost = context.env.SKILLSGIST_INSTALL_KEY?.trim() ? hostOrigin(context.env.SKILLSGIST_HOST ?? "") : null;
+    const key = context.env.SKILLSGIST_INSTALL_KEY?.trim() ?? "";
+    const envHost = key === "" ? null : hostOrigin(context.env.SKILLSGIST_HOST ?? "");
+    unbound = key !== "" && envHost === null;
     origins = [...new Set([...Object.keys(readCredentials(config).hosts), ...(envHost === null ? [] : [envHost])])];
   }
   if (origins.length === 0) {
-    ui.info("Not signed in. Run: npx skillsgist login <url>");
+    ui.info(unbound ? `${UNBOUND_KEY}\nNot signed in. Run: npx skillsgist login <url>` : "Not signed in. Run: npx skillsgist login <url>");
     return 1;
   }
   const lookup: ConfigContext = url === null ? { ...config, warn: undefined } : config;
-  const lines: string[] = [];
+  const lines: string[] = unbound ? [UNBOUND_KEY] : [];
   let failed = false;
   for (const origin of origins) {
     const credential = resolveCredential(origin, lookup);
