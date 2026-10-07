@@ -259,7 +259,10 @@ function explain(err: AuthError, credential: Credential, source: Source): CliErr
   const host = hostOf(source.origin);
   if (credential.kind === "env" && err.status === 401) return new CliError(`SKILLSGIST_INSTALL_KEY was rejected by ${host}: it was reset or revoked`);
   if (credential.kind === "env" && err.code === "wrong_project") {
-    return new CliError(`SKILLSGIST_INSTALL_KEY is for project ${err.project ?? "another project"}, not ${source.project ?? source.display}`);
+    return new CliError(
+      `SKILLSGIST_INSTALL_KEY is for project ${err.project ?? "another project"}, not ${source.project ?? source.display}. ` +
+        `Use the install key of project ${source.project ?? "this project"}, or unset SKILLSGIST_INSTALL_KEY to use your sign-in`,
+    );
   }
   if (credential.kind === "login" && err.status === 401) return new CliError(`Your sign-in to ${host} has expired or was revoked. Run: ${loginCommand(source)}`);
   if (credential.kind === "login" && err.code === "project_not_granted") {
