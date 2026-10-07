@@ -6,7 +6,7 @@ Install Agent Skills from a [skillsgist](https://github.com/Qsnh/skillsgist) reg
 npx skillsgist add https://skills.example.com/p/<project>
 ```
 
-Public skills install without an account. For a project's private skills, sign in once with `npx skillsgist login`, or give CI an install key in an environment variable. Neither ever goes in the URL.
+Public skills install without an account. For a project's private skills, sign in once with `npx skillsgist login <url>`, or give CI an install key in an environment variable. Neither ever goes in the URL.
 
 ## Usage
 
@@ -42,14 +42,14 @@ Inside a coding agent (Claude Code, Codex, Cursor and others are detected from t
 npx skillsgist login https://skills.example.com/p/<project>
 ```
 
-`login` prints a link and a code, and opens the link in your browser. Check that the page shows the same code, sign in, tick the projects this computer may install from, and approve. From then on, `add` sends the sign-in with its requests to that registry, and to no other.
+`login` prints a link and a code, and opens the link in your browser. Check that the page shows the same code, sign in, tick the projects this computer may install from, and approve. From then on, `add` sends the sign-in with its requests to that registry, and to no other. Add `--no-browser` to only print the link.
 
 - Run `login` again to change the projects. The new sign-in replaces the old one, which is revoked.
 - `npx skillsgist whoami` shows who you are signed in as, and for which projects.
-- `npx skillsgist logout` revokes this computer's sign-in and deletes it. Your account page in skillsgist lists every computer you signed in from, and can revoke any of them.
-- Inside a coding agent, or without a terminal, `login` only prints the link and the code, so the agent can pass them on to you.
+- `npx skillsgist logout` revokes this computer's sign-in and deletes it; if you are signed in to several registries, name the one to sign out of (`npx skillsgist logout <url>`). Your account page in skillsgist lists every computer you signed in from, and can revoke any of them.
+- Inside a coding agent, or without a terminal, `login` still waits for your approval in the browser before it returns. Have the agent run it in the background and pass the link and code on to you, or run `login` yourself in your own terminal.
 
-The sign-in is kept in `~/.config/skillsgist/credentials.json` (under `$XDG_CONFIG_HOME` if set, `%APPDATA%\skillsgist` on Windows, or `$SKILLSGIST_CONFIG_DIR`), readable only by you. It lapses after 90 days without use.
+The sign-in is kept in `~/.config/skillsgist/credentials.json` (under `$XDG_CONFIG_HOME` if set, `%APPDATA%\skillsgist` on Windows, or `$SKILLSGIST_CONFIG_DIR`), readable only by you (on Windows, the file's permissions are not changed). It lapses after 90 days without use.
 
 ## CI and containers
 
@@ -72,7 +72,7 @@ If a sign-in leaks, revoke it on your account page. If an install key leaks, res
 
 ## Upgrading from 0.4
 
-Addresses with an install key in them (`https://host/i/<key>`) no longer work: use the project's address with `login`, or the variables above. A skillsgist registry older than this release cannot sign you in; until it is upgraded, `npx skillsgist@0.4.1` still installs from it.
+Addresses with an install key in them (`https://host/i/<key>`) no longer work: use the project's address with `login`, or the variables above. A skillsgist registry older than this release cannot sign you in; until it is upgraded, `npx skillsgist@0.4.1` still installs from it. Reset any install key you ever used in an `/i/` address: it is still in your shell history, npm's logs and agent transcripts.
 
 ## Development
 

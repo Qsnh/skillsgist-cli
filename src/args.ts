@@ -28,7 +28,7 @@ Commands:
 Environment:
   SKILLSGIST_INSTALL_KEY  A project's install key, for CI and containers
   SKILLSGIST_HOST         The registry the install key belongs to; it is sent nowhere else
-  SKILLSGIST_CONFIG_DIR   Where sign-ins are kept (default ~/.config/skillsgist)
+  SKILLSGIST_CONFIG_DIR   Where sign-ins are kept, instead of the default config directory
 
 Options for add:
   -g, --global            Install into your home directory instead of the project
