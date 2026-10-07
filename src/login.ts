@@ -62,7 +62,11 @@ export async function signIn(source: Source, context: AccountContext, options: L
   try {
     identity = await whoami(source.origin, grant.token, context.fetch);
   } catch (err) {
-    await revokeToken(meta, grant.token, context.fetch).catch(() => undefined);
+    try {
+      await revokeToken(meta, grant.token, context.fetch);
+    } catch (revokeErr) {
+      ui.warn(`Could not revoke the new sign-in (${errorMessage(revokeErr)}). Revoke it at ${source.origin}/me`);
+    }
     throw err;
   }
   const now = context.fetch?.now ?? Date.now;

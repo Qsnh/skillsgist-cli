@@ -124,6 +124,16 @@ describe("runLogin", () => {
     expect(existsSync(box.file)).toBe(false);
   });
 
+  it("warns and keeps the original error when it cannot revoke a token that failed whoami", async () => {
+    installFakeAuth(registry, { revokeStatus: 500 });
+    registry.routes.set("/api/whoami", { status: 500, body: "boom" });
+    const box = account();
+    await expect(runLogin(registry.origin, { browser: false }, box.context)).rejects.toThrow("answered HTTP 500");
+    expect(existsSync(box.file)).toBe(false);
+    expect(box.ui.text()).toContain("warn: Could not revoke the new sign-in");
+    expect(box.ui.text()).not.toContain(LOGIN_TOKEN);
+  });
+
   it("refuses an install-key address before contacting the registry", async () => {
     const box = account();
     await expect(runLogin(`${registry.origin}/i/0123456789abcdef0123456789abcdef`, { browser: true }, box.context)).rejects.toThrow(
