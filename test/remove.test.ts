@@ -1,10 +1,12 @@
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { CANCELLED, type Ui } from "../src/add.js";
 import { loadAgents, type AgentEnvironment } from "../src/agents.js";
+import { CliError } from "../src/errors.js";
 import { installSkill, type InstallOptions } from "../src/installer.js";
 import { shortPath } from "../src/paths.js";
-import { findRemovals, pickRemovals, vetRemovals, type RemoveOptions } from "../src/remove.js";
+import { findRemovals, pickRemovals, runRemove, vetRemovals, type RemoveContext, type RemoveOptions } from "../src/remove.js";
 import { cleanup, sandboxExists, tempDir } from "./helpers/fs.js";
 
 afterEach(cleanup);
@@ -36,7 +38,64 @@ function setup() {
   const pick = (...ids: string[]) => ids.map((id) => agents.find((agent) => agent.id === id)!);
   const install = (name: string, ids: string[], overrides: Partial<InstallOptions> = {}) =>
     installSkill(name, skillFiles(name), pick(...ids), { global: false, copy: false, confirmed: true, home, cwd, ...overrides });
-  return { root, home, cwd, exists, environment, pick, install };
+  const context = (ui: Ui, env: NodeJS.ProcessEnv = {}, interactive = true): RemoveContext => ({ ui, home, cwd, env, interactive, exists });
+  return { root, home, cwd, exists, environment, pick, install, context };
+}
+
+type Answer<T> = T | typeof CANCELLED;
+
+interface Answers {
+  selectInstalled?: Answer<number[]>;
+  confirm?: Answer<boolean>;
+}
+
+function fakeUi(answers: Answers = {}) {
+  const lines: string[] = [];
+  const asked: string[] = [];
+  function answer<T>(name: string): T {
+    asked.push(name);
+    if (!(name in answers)) throw new Error(`unexpected ${name} prompt`);
+    return answers[name as keyof Answers] as T;
+  }
+  const ui: Ui = {
+    intro: (message) => lines.push(message),
+    step: (message) => lines.push(message),
+    info: (message) => lines.push(message),
+    warn: (message) => lines.push(`warn: ${message}`),
+    error: (message) => lines.push(`error: ${message}`),
+    message: (message) => lines.push(message),
+    note: (body, title) => lines.push(`${title}\n${body}`),
+    cancel: (message) => lines.push(`cancel: ${message}`),
+    outro: (message) => lines.push(message),
+    selectSkills: async () => answer("selectSkills"),
+    selectAgents: async () => answer("selectAgents"),
+    selectScope: async () => answer("selectScope"),
+    selectInstalled: async (skills) => {
+      lines.push(...skills.map((skill) => `${skill.name} ${skill.path}`));
+      return answer("selectInstalled");
+    },
+    confirm: async (message) => {
+      lines.push(message);
+      return answer("confirm");
+    },
+  };
+  return { ui, asked, text: () => lines.join("\n") };
+}
+
+const present = (path: string) => lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+
+function left(base: string): { agents: string[]; claude: string[] } {
+  const names = (dir: string) => (existsSync(dir) ? readdirSync(dir).sort() : []);
+  return { agents: names(join(base, ".agents/skills")), claude: names(join(base, ".claude/skills")) };
+}
+
+async function failure(promise: Promise<unknown>): Promise<CliError> {
+  const error = await promise.then(
+    () => null,
+    (err: unknown) => err,
+  );
+  expect(error).toBeInstanceOf(CliError);
+  return error as CliError;
 }
 
 const removeOptions = (overrides: Partial<RemoveOptions> = {}): RemoveOptions => ({
@@ -209,5 +268,195 @@ describe("vetRemovals", () => {
     const other = removals.find((removal) => removal.name === "other")!;
     const otherVetted = await vetRemovals([other], environment(), { global: false, yes: true });
     expect(otherVetted.refusals).toEqual([]);
+  });
+});
+
+describe("runRemove", () => {
+  const both = { agents: ["demo-skill", "other-skill"], claude: ["demo-skill", "other-skill"] };
+
+  async function installBoth(install: ReturnType<typeof setup>["install"]): Promise<void> {
+    await install("demo-skill", ["claude-code"]);
+    await install("other-skill", ["claude-code"]);
+  }
+
+  it("removes a named skill's link and folder without asking anything under -y", async () => {
+    const { cwd, context, install } = setup();
+    await installBoth(install);
+    const ui = fakeUi();
+    expect(await runRemove(removeOptions({ skills: ["demo-skill"], yes: true }), context(ui.ui))).toBe(0);
+    expect(ui.asked).toEqual([]);
+    expect(present(join(cwd, ".agents/skills/demo-skill"))).toBe(false);
+    expect(present(join(cwd, ".claude/skills/demo-skill"))).toBe(false);
+    expect(lstatSync(join(cwd, ".claude/skills/other-skill")).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(cwd, ".claude/skills/other-skill/SKILL.md"))).toBe(true);
+    expect(ui.text()).toContain("Removal Summary\ndemo-skill\n  ./.claude/skills/demo-skill (link)\n  ./.agents/skills/demo-skill");
+    expect(ui.text()).toContain("Removed 1 skill\n✓ demo-skill");
+    expect(ui.text()).not.toContain("other-skill");
+    expect(ui.text()).toMatch(/Done!$/);
+  });
+
+  it("asks which skills to remove and confirms first without -y", async () => {
+    const { cwd, context, install } = setup();
+    await installBoth(install);
+
+    const declined = fakeUi({ selectInstalled: [1], confirm: false });
+    expect(await runRemove(removeOptions(), context(declined.ui))).toBe(0);
+    expect(declined.text()).toContain("cancel: Removal cancelled");
+    expect(left(cwd)).toEqual(both);
+
+    const dismissed = fakeUi({ selectInstalled: CANCELLED });
+    expect(await runRemove(removeOptions(), context(dismissed.ui))).toBe(0);
+    expect(dismissed.asked).toEqual(["selectInstalled"]);
+    expect(dismissed.text()).toContain("cancel: Removal cancelled");
+    expect(left(cwd)).toEqual(both);
+
+    const ui = fakeUi({ selectInstalled: [1], confirm: true });
+    expect(await runRemove(removeOptions(), context(ui.ui))).toBe(0);
+    expect(ui.asked).toEqual(["selectInstalled", "confirm"]);
+    expect(ui.text()).toContain("demo-skill ./.agents/skills/demo-skill\nother-skill ./.agents/skills/other-skill");
+    expect(ui.text()).toContain("Remove 1 skill?");
+    expect(ui.text()).toContain("Removed 1 skill\n✓ other-skill");
+    expect(left(cwd)).toEqual({ agents: ["demo-skill"], claude: ["demo-skill"] });
+  });
+
+  it("removes every project skill with --all and leaves the global ones", async () => {
+    const { home, cwd, context, install } = setup();
+    await installBoth(install);
+    await install("glob-skill", ["claude-code"], { global: true });
+    const ui = fakeUi();
+    expect(await runRemove(removeOptions({ all: true, yes: true }), context(ui.ui))).toBe(0);
+    expect(ui.asked).toEqual([]);
+    expect(ui.text()).toContain("Removed 2 skills\n✓ demo-skill\n✓ other-skill");
+    expect(left(cwd)).toEqual({ agents: [], claude: [] });
+    expect(left(home)).toEqual({ agents: ["glob-skill"], claude: ["glob-skill"] });
+  });
+
+  it("says when there is nothing to remove", async () => {
+    const { context } = setup();
+    const project = fakeUi();
+    expect(await runRemove(removeOptions(), context(project.ui))).toBe(0);
+    expect(project.asked).toEqual([]);
+    expect(project.text()).toContain("No project skills to remove");
+
+    const global = fakeUi();
+    expect(await runRemove(removeOptions({ global: true, all: true, yes: true }), context(global.ui))).toBe(0);
+    expect(global.text()).toContain("No global skills to remove");
+  });
+
+  it("needs a terminal or -y, and inside an agent removes only named skills, without asking", async () => {
+    const { cwd, context, install } = setup();
+    await installBoth(install);
+
+    const noTerminal = fakeUi();
+    const error = await failure(runRemove(removeOptions({ skills: ["demo-skill"] }), context(noTerminal.ui, {}, false)));
+    expect(error.message).toBe("There is no terminal to ask questions in. Add -y to remove without prompts.");
+    expect(noTerminal.asked).toEqual([]);
+    expect(left(cwd)).toEqual(both);
+
+    const unnamed = fakeUi();
+    const usage = await failure(runRemove(removeOptions(), context(unnamed.ui, { CLAUDECODE: "1" }, false)));
+    expect(usage.message).toBe("Name the skills to remove, or use --all");
+    expect(usage.showUsage).toBe(true);
+    expect(unnamed.asked).toEqual([]);
+    expect(left(cwd)).toEqual(both);
+
+    const agent = fakeUi();
+    expect(await runRemove(removeOptions({ skills: ["demo-skill"] }), context(agent.ui, { CLAUDECODE: "1" }, false))).toBe(0);
+    expect(agent.asked).toEqual([]);
+    expect(agent.text()).toContain("Claude Code detected — removing non-interactively");
+    expect(left(cwd)).toEqual({ agents: ["other-skill"], claude: ["other-skill"] });
+  });
+
+  it("removes nothing when a named skill is not installed, and names the scope it is installed in", async () => {
+    const { cwd, context, install } = setup();
+    await installBoth(install);
+
+    const local = await failure(runRemove(removeOptions({ skills: ["demo-skill", "nope"], yes: true }), context(fakeUi().ui)));
+    expect(local.message).toBe("Not installed in the project: nope. Installed there: demo-skill, other-skill");
+    expect(left(cwd)).toEqual(both);
+
+    await install("nope", ["claude-code"], { global: true });
+    const elsewhere = await failure(runRemove(removeOptions({ skills: ["demo-skill", "nope"], yes: true }), context(fakeUi().ui)));
+    expect(elsewhere.message).toBe("Not installed in the project: nope. Installed there: demo-skill, other-skill\nInstalled globally: nope (add -g)");
+    expect(left(cwd)).toEqual(both);
+
+    const global = await failure(runRemove(removeOptions({ global: true, skills: ["demo-skill"], yes: true }), context(fakeUi().ui)));
+    expect(global.message).toBe("Not installed globally: demo-skill. Installed there: nope\nInstalled in the project: demo-skill (leave out -g)");
+  });
+
+  it("deletes a link to a folder outside every skills directory, but not the folder", async () => {
+    const { root, cwd, context } = setup();
+    writeSkillMd(join(root, "elsewhere/demo-skill"), skillMd("demo-skill"));
+    mkdirSync(join(cwd, ".claude/skills"), { recursive: true });
+    symlinkSync(join(root, "elsewhere/demo-skill"), join(cwd, ".claude/skills/demo-skill"));
+    const ui = fakeUi();
+    expect(await runRemove(removeOptions({ skills: ["demo-skill"], yes: true }), context(ui.ui))).toBe(0);
+    expect(present(join(cwd, ".claude/skills/demo-skill"))).toBe(false);
+    expect(existsSync(join(root, "elsewhere/demo-skill/SKILL.md"))).toBe(true);
+  });
+
+  it("refuses a skills directory leading out of the project under -y, and removes it once confirmed", async () => {
+    const { root, cwd, context, install } = setup();
+    mkdirSync(join(root, "elsewhere"));
+    symlinkSync(join(root, "elsewhere"), join(cwd, ".claude"));
+    await install("demo-skill", ["claude-code"]);
+    const outsideLink = join(root, "elsewhere/skills/demo-skill");
+
+    const refused = await failure(runRemove(removeOptions({ skills: ["demo-skill"], yes: true }), context(fakeUi().ui)));
+    expect(refused.message).toMatch(/^Nothing was removed:\n/);
+    expect(present(join(cwd, ".agents/skills/demo-skill"))).toBe(true);
+    expect(present(outsideLink)).toBe(true);
+
+    const ui = fakeUi({ confirm: true });
+    expect(await runRemove(removeOptions({ skills: ["demo-skill"] }), context(ui.ui))).toBe(0);
+    expect(ui.text()).toContain(`  ./.claude/skills/demo-skill (link) → ${outsideLink} (outside the project)\n  ./.agents/skills/demo-skill`);
+    expect(present(join(cwd, ".agents/skills/demo-skill"))).toBe(false);
+    expect(present(outsideLink)).toBe(false);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("removes what it can, names each path it cannot, and returns 1", async () => {
+    const { cwd, context, install } = setup();
+    await installBoth(install);
+    chmodSync(join(cwd, ".claude/skills"), 0o555);
+    try {
+      const ui = fakeUi();
+      expect(await runRemove(removeOptions({ all: true, yes: true }), context(ui.ui))).toBe(1);
+      expect(ui.text()).toMatch(
+        /^error: Failed to remove 2 paths\n✗ \.\/\.claude\/skills\/demo-skill: [^\n]*EACCES[^\n]*\n✗ \.\/\.claude\/skills\/other-skill: [^\n]*EACCES/m,
+      );
+      expect(ui.text()).not.toContain("Removed");
+      expect(ui.text()).toMatch(/Done!$/);
+      expect(left(cwd)).toEqual({ agents: [], claude: ["demo-skill", "other-skill"] });
+    } finally {
+      chmodSync(join(cwd, ".claude/skills"), 0o755);
+    }
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("warns about a folder it cannot read and still removes the rest", async () => {
+    const { cwd, context, install } = setup();
+    await install("demo-skill", ["claude-code"]);
+    writeSkillMd(join(cwd, ".agents/skills/locked"), skillMd("locked"));
+    chmodSync(join(cwd, ".agents/skills/locked"), 0o000);
+    try {
+      const ui = fakeUi();
+      expect(await runRemove(removeOptions({ skills: ["demo-skill"], yes: true }), context(ui.ui))).toBe(0);
+      expect(ui.text()).toContain("warn: Cannot read ./.agents/skills/locked/SKILL.md (EACCES)");
+      expect(left(cwd)).toEqual({ agents: ["locked"], claude: [] });
+    } finally {
+      chmodSync(join(cwd, ".agents/skills/locked"), 0o755);
+    }
+  });
+
+  it("prints no terminal escapes or install keys found in a skill's name", async () => {
+    const { cwd, context } = setup();
+    writeSkillMd(join(cwd, ".agents/skills/evil"), '---\nname: "evil\\e]52;c;ZXZpbA==\\a"\ndescription: Demo.\n---\n');
+    writeSkillMd(join(cwd, ".agents/skills/keyed"), '---\nname: "https://h.example/i/abcdefghijkl"\ndescription: Demo.\n---\n');
+    const ui = fakeUi({ selectInstalled: [0, 1], confirm: true });
+    expect(await runRemove(removeOptions(), context(ui.ui))).toBe(0);
+    expect(ui.text()).toContain("✓ evil]52;c;ZXZpbA==");
+    expect(ui.text()).toContain("✓ https://h.example/i/abcd…");
+    expect(ui.text()).not.toMatch(/[\x1b\x07]/);
+    expect(ui.text()).not.toContain("abcdefghijkl");
+    expect(left(cwd).agents).toEqual([]);
   });
 });

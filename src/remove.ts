@@ -1,8 +1,13 @@
+import { rm } from "node:fs/promises";
 import { basename, dirname } from "node:path";
-import { agentsById, loadAgents, skillsRoot, type AgentEnvironment, type Scope } from "./agents.js";
+import { CANCELLED, type Cancellable, type Ui } from "./add.js";
+import { agentsById, detectRunningAgent, loadAgents, skillsRoot, type AgentEnvironment, type Exists, type Scope } from "./agents.js";
+import { CliError } from "./errors.js";
+import { plural } from "./format.js";
 import { locator, sanitizeName, type Locator } from "./installer.js";
 import { findInstalledSkills, type InstalledEntry } from "./list-skills.js";
 import { isInside, shortPath } from "./paths.js";
+import { displayLine } from "./source.js";
 
 export interface RemoveOptions {
   global: boolean;
@@ -23,6 +28,17 @@ export interface Vetting {
   outside: Map<string, string>;
   refusals: string[];
 }
+
+export interface RemoveContext {
+  ui: Ui;
+  home: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  interactive: boolean;
+  exists?: Exists;
+}
+
+type Short = (path: string) => string;
 
 export async function findRemovals(environment: AgentEnvironment, options: RemoveOptions): Promise<{ removals: Removal[]; problems: string[] }> {
   const named = options.agents?.filter((id) => id !== "*") ?? [];
@@ -113,4 +129,112 @@ export async function vetRemovals(
     }
   }
   return { outside, refusals };
+}
+
+function cancelled(ui: Ui): number {
+  ui.cancel("Removal cancelled");
+  return 0;
+}
+
+async function notInstalled(missing: string[], removals: Removal[], environment: AgentEnvironment, options: RemoveOptions): Promise<CliError> {
+  const named = options.agents?.filter((id) => id !== "*") ?? [];
+  const forAgents = options.agents !== null && !options.agents.includes("*") ? ` for ${named.join(", ")}` : "";
+  const place = options.global ? "globally" : "in the project";
+  const installed = [...new Set(removals.map((removal) => displayLine(removal.name)))];
+  const there = installed.length > 0 ? `Installed there: ${installed.join(", ")}` : "Nothing is installed there.";
+  const lines = [`Not installed ${place}${forAgents}: ${missing.map(displayLine).join(", ")}. ${there}`];
+  const other = await findRemovals(environment, { ...options, global: !options.global });
+  const absent = pickRemovals(other.removals, missing).missing;
+  const found = missing.filter((name) => !absent.includes(name)).map(displayLine);
+  if (found.length > 0) {
+    lines.push(options.global ? `Installed in the project: ${found.join(", ")} (leave out -g)` : `Installed globally: ${found.join(", ")} (add -g)`);
+  }
+  return new CliError(lines.join("\n"));
+}
+
+async function chooseRemovals(
+  removals: Removal[],
+  options: RemoveOptions,
+  environment: AgentEnvironment,
+  ui: Ui,
+  short: Short,
+): Promise<Cancellable<Removal[]>> {
+  if (options.skills.length > 0) {
+    const { picked, missing } = pickRemovals(removals, options.skills);
+    if (missing.length > 0) throw await notInstalled(missing, removals, environment, options);
+    return picked;
+  }
+  if (options.all) return removals;
+  const chosen = await ui.selectInstalled(removals.map((removal) => ({ name: displayLine(removal.name), path: short(removal.path) })));
+  return chosen === CANCELLED ? CANCELLED : removals.filter((_, index) => chosen.includes(index));
+}
+
+function summary(removals: Removal[], outside: Map<string, string>, short: Short): string {
+  const line = (entry: InstalledEntry) => {
+    const real = outside.get(entry.path);
+    const away = real === undefined ? "" : ` → ${short(real)} (outside the project)`;
+    return `  ${short(entry.path)}${entry.linked ? " (link)" : ""}${away}`;
+  };
+  return removals.map((removal) => [displayLine(removal.name), ...removal.entries.map(line)].join("\n")).join("\n\n");
+}
+
+async function removeEntries(removals: Removal[], short: Short): Promise<{ removed: Removal[]; failures: string[] }> {
+  const removed: Removal[] = [];
+  const failures: string[] = [];
+  for (const removal of removals) {
+    const before = failures.length;
+    for (const entry of removal.entries) {
+      try {
+        await rm(entry.path, { recursive: true, force: true });
+      } catch (err) {
+        failures.push(`✗ ${short(entry.path)}: ${displayLine((err instanceof Error && err.message) || String(err))}`);
+      }
+    }
+    if (failures.length === before) removed.push(removal);
+  }
+  return { removed, failures };
+}
+
+function report(removed: Removal[], failures: string[], ui: Ui): void {
+  if (removed.length > 0) ui.note(removed.map((removal) => `✓ ${displayLine(removal.name)}`).join("\n"), `Removed ${plural(removed.length, "skill")}`);
+  if (failures.length > 0) ui.error([`Failed to remove ${plural(failures.length, "path")}`, ...failures].join("\n"));
+}
+
+export async function runRemove(options: RemoveOptions, context: RemoveContext): Promise<number> {
+  const { ui, home, cwd } = context;
+  const running = detectRunningAgent(context.env, context.exists);
+  const yes = options.yes || running.inAgent;
+  if (!yes && !context.interactive) {
+    throw new CliError("There is no terminal to ask questions in. Add -y to remove without prompts.");
+  }
+  if (yes && !options.all && options.skills.length === 0) throw new CliError("Name the skills to remove, or use --all", { showUsage: true });
+  if (running.inAgent) {
+    ui.info(`${running.name ?? "An agent"} detected — removing non-interactively`);
+  } else {
+    ui.intro("skillsgist");
+  }
+
+  const environment: AgentEnvironment = { home, cwd, env: context.env, exists: context.exists };
+  const short = (path: string) => displayLine(shortPath(path, home, cwd));
+  const { removals, problems } = await findRemovals(environment, options);
+  for (const problem of problems) ui.warn(displayLine(problem));
+  if (options.skills.length === 0 && removals.length === 0) {
+    ui.outro(`No ${options.global ? "global" : "project"} skills to remove`);
+    return 0;
+  }
+  const chosen = await chooseRemovals(removals, options, environment, ui, short);
+  if (chosen === CANCELLED) return cancelled(ui);
+
+  const { outside, refusals } = await vetRemovals(chosen, environment, { global: options.global, yes });
+  if (refusals.length > 0) throw new CliError(["Nothing was removed:", ...refusals.map(displayLine)].join("\n"));
+  ui.note(summary(chosen, outside, short), "Removal Summary");
+  if (!yes) {
+    const proceed = await ui.confirm(`Remove ${plural(chosen.length, "skill")}?`);
+    if (proceed === CANCELLED || !proceed) return cancelled(ui);
+  }
+
+  const { removed, failures } = await removeEntries(chosen, short);
+  report(removed, failures, ui);
+  ui.outro("Done!");
+  return failures.length > 0 ? 1 : 0;
 }

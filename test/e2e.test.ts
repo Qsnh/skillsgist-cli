@@ -332,3 +332,64 @@ describe("skillsgist list", () => {
     expect(code).toBe(0);
   });
 });
+
+describe("skillsgist remove", () => {
+  const present = (path: string) => lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+
+  async function installed(box: Sandbox): Promise<Result> {
+    const added = await run(box, ["add", `${registry.origin}/i/${KEY}`, "-y", "-a", "claude-code"]);
+    expect(added.code).toBe(0);
+    return added;
+  }
+
+  it("removes a named skill's folder and link with -y, without touching the network", async () => {
+    const box = sandbox();
+    const added = await installed(box);
+    const result = await run(box, ["remove", "demo-skill", "-y"]);
+    expect(result.code).toBe(0);
+    expect(result.output).toContain("✓ demo-skill");
+    expect(present(join(box.cwd, ".agents/skills/demo-skill"))).toBe(false);
+    expect(present(join(box.cwd, ".claude/skills/demo-skill"))).toBe(false);
+    const listed = await run(box, ["list", "-p", "--json"]);
+    expect((JSON.parse(listed.stdout) as Array<{ name: string }>).map((row) => row.name)).toEqual(["other-skill"]);
+    expect(result.connections).toEqual(added.connections);
+    expect(result.output).not.toContain(KEY);
+    expect(result.output).not.toContain("\x1b");
+  });
+
+  it("needs -y without a terminal, but not inside an agent", async () => {
+    const box = sandbox();
+    await installed(box);
+    const before = sandboxSnapshot(box);
+    const refused = await run(box, ["remove", "demo-skill"]);
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain("There is no terminal");
+    expect(sandboxSnapshot(box)).toEqual(before);
+
+    const inside = await run(box, ["remove", "demo-skill"], { CLAUDECODE: "1" });
+    expect(inside.code).toBe(0);
+    expect(inside.output).toContain("Claude Code detected — removing non-interactively");
+    expect(present(join(box.cwd, ".agents/skills/demo-skill"))).toBe(false);
+    expect(present(join(box.cwd, ".claude/skills/demo-skill"))).toBe(false);
+  });
+
+  it("removes every project skill with --all, and rejects an unknown name or a name next to --all", async () => {
+    const box = sandbox();
+    await installed(box);
+    const home = sandboxSnapshot(box).home;
+    const all = await run(box, ["rm", "--all"]);
+    expect(all.code).toBe(0);
+    expect(readdirSync(join(box.cwd, ".agents/skills"))).toEqual([]);
+    expect(readdirSync(join(box.cwd, ".claude/skills"))).toEqual([]);
+    expect(sandboxSnapshot(box).home).toEqual(home);
+
+    const unknown = await run(box, ["rm", "nope", "-y"]);
+    expect(unknown.code).toBe(1);
+    expect(unknown.output).toContain("Not installed in the project: nope");
+
+    const mixed = await run(box, ["remove", "--all", "demo-skill"]);
+    expect(mixed.code).toBe(1);
+    expect(mixed.stderr).toContain("Cannot combine");
+    expect(mixed.stderr).toContain("Usage:");
+  });
+});

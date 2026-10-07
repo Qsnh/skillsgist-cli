@@ -41,6 +41,7 @@ export interface Ui {
   selectSkills(skills: SkillEntry[]): Promise<Cancellable<SkillEntry[]>>;
   selectAgents(request: AgentRequest): Promise<Cancellable<string[]>>;
   selectScope(): Promise<Cancellable<boolean>>;
+  selectInstalled(skills: Array<{ name: string; path: string }>): Promise<Cancellable<number[]>>;
   confirm(message: string): Promise<Cancellable<boolean>>;
 }
 
