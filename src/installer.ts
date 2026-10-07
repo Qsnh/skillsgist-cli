@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import { canonicalSkillsRoot, skillsRoot, type Agent } from "./agents.js";
 import type { SkillFiles } from "./archive.js";
 import { CliError } from "./errors.js";
-import { within } from "./paths.js";
+import { isInside } from "./paths.js";
 
 export interface InstallOptions {
   global: boolean;
@@ -48,11 +48,6 @@ export function sanitizeName(name: string): string {
       .replace(/^[.-]+|[.-]+$/g, "")
       .slice(0, 255) || "unnamed-skill"
   );
-}
-
-function isInside(base: string, target: string): boolean {
-  const rest = within(base, target);
-  return rest !== null && rest !== "";
 }
 
 function inside(base: string, name: string): string {
