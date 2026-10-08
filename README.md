@@ -70,10 +70,6 @@ The key is sent in a request header, and only to the registry that `SKILLSGIST_H
 
 If a sign-in leaks, revoke it on your account page. If an install key leaks, reset it on the project's settings page.
 
-## Upgrading from 0.4
-
-Addresses with an install key in them (`https://host/i/<key>`) no longer work: use the project's address with `login`, or the variables above. A skillsgist registry older than this release cannot sign you in; until it is upgraded, `npx skillsgist@0.4.1` still installs from it. Reset any install key you ever used in an `/i/` address: it is still in your shell history, npm's logs and agent transcripts.
-
 ## Development
 
 ```bash
