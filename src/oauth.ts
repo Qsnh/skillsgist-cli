@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { CliError } from "./errors.js";
-import { authFailure, discard, readJson, request, type FetchOptions, type Reply } from "./http.js";
+import { authFailure, bearer, discard, isToken, readJson, request, type FetchOptions, type Reply } from "./http.js";
 import { printable, redact, registerSecret } from "./source.js";
 
 export const CLIENT_ID = "skillsgist-cli";
@@ -10,9 +10,9 @@ const MAX_JSON_BYTES = 64 * 1024;
 const SLOW_DOWN_MS = 5000;
 const DEFAULT_INTERVAL_S = 5;
 const MIN_INTERVAL_MS = 1000;
+const MAX_INTERVAL_MS = 60 * 1000;
 const MAX_EXPIRES_S = 30 * 60;
 const USER_CODE = /^[A-Za-z0-9-]{1,32}$/;
-const TOKEN_VALUE = /^[\x21-\x7e]{1,4096}$/;
 
 export interface OAuthOptions extends FetchOptions {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -37,12 +37,10 @@ export interface DeviceCode {
 
 export interface Grant {
   token: string;
-  projects: string[];
 }
 
 export interface Identity {
   user: string;
-  kind: "login" | "install_key";
   projects: string[];
 }
 
@@ -72,16 +70,6 @@ function issuerOrigin(value: unknown): string | null {
   } catch {
     return null;
   }
-}
-
-function projectsOf(scope: unknown): string[] {
-  if (typeof scope !== "string") return [];
-  const projects = scope
-    .split(/\s+/)
-    .filter((item) => item.startsWith("project:"))
-    .map((item) => item.slice("project:".length))
-    .filter((project) => project !== "");
-  return [...new Set(projects)];
 }
 
 async function failed(reply: Reply, url: string): Promise<CliError> {
@@ -155,7 +143,8 @@ export async function pollForToken(meta: ServerMetadata, device: DeviceCode, opt
   const sleep = options.sleep ?? ((ms: number, signal?: AbortSignal) => delay(ms, undefined, { signal }));
   const now = options.now ?? Date.now;
   const deadline = now() + Math.min(device.expiresIn, MAX_EXPIRES_S) * 1000;
-  let interval = Math.max(device.interval * 1000, MIN_INTERVAL_MS);
+  // Clamped both ways: a huge interval would overflow the timer and fire at once, or outlast the deadline.
+  let interval = Math.min(Math.max(device.interval * 1000, MIN_INTERVAL_MS), MAX_INTERVAL_MS);
   for (;;) {
     await sleep(interval, options.signal);
     if (now() >= deadline) throw expired();
@@ -163,11 +152,11 @@ export async function pollForToken(meta: ServerMetadata, device: DeviceCode, opt
     if (reply.res.ok) {
       const body = fields(await readJson(reply, MAX_JSON_BYTES, redact(meta.tokenEndpoint)));
       const token = body.access_token;
-      if (typeof token !== "string" || !TOKEN_VALUE.test(token) || typeof body.token_type !== "string" || body.token_type.toLowerCase() !== "bearer") {
+      if (typeof token !== "string" || !isToken(token) || typeof body.token_type !== "string" || body.token_type.toLowerCase() !== "bearer") {
         throw new CliError(`${hostOf(meta.origin)} sent an invalid sign-in token`);
       }
       registerSecret(token);
-      return { token, projects: projectsOf(body.scope) };
+      return { token };
     }
     if (reply.res.status !== 400 && reply.res.status !== 401) throw await failed(reply, meta.tokenEndpoint);
     let code: unknown = null;
@@ -178,7 +167,7 @@ export async function pollForToken(meta: ServerMetadata, device: DeviceCode, opt
     }
     if (code === "authorization_pending") continue;
     if (code === "slow_down") {
-      interval += SLOW_DOWN_MS;
+      interval = Math.min(interval + SLOW_DOWN_MS, MAX_INTERVAL_MS);
       continue;
     }
     if (code === "access_denied") throw new CliError("Sign-in was denied in the browser");
@@ -197,18 +186,17 @@ export async function revokeToken(meta: ServerMetadata, token: string, options: 
 
 export async function whoami(origin: string, token: string, options: OAuthOptions = {}): Promise<Identity> {
   const url = `${origin}/api/whoami`;
-  const reply = await request(url, { ...options, headers: { authorization: `Bearer ${token}` } });
+  const reply = await request(url, { ...options, headers: bearer(token) });
   if (reply.res.status === 401 || reply.res.status === 403) throw await authFailure(reply, url);
   if (!reply.res.ok) throw await failed(reply, url);
   const body = fields(await readJson(reply, MAX_JSON_BYTES, redact(url)));
   const projects = body.projects;
   if (
     typeof body.user !== "string" ||
-    (body.kind !== "login" && body.kind !== "install_key") ||
     !Array.isArray(projects) ||
     !projects.every((project) => typeof project === "string")
   ) {
     throw new CliError(`${redact(url)} sent an answer skillsgist cannot read`);
   }
-  return { user: body.user, kind: body.kind, projects: projects as string[] };
+  return { user: body.user, projects: projects as string[] };
 }

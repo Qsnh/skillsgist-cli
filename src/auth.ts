@@ -1,10 +1,10 @@
 import { getLogin, type ConfigContext } from "./credentials.js";
+import { bearer, isToken } from "./http.js";
 import { LOOPBACK_HOSTS, registerSecret } from "./source.js";
 
-export type Credential = { kind: "none" } | { kind: "env"; token: string } | { kind: "login"; token: string; user: string; projects: string[] };
+export type Credential = { kind: "none" } | { kind: "env" | "login"; token: string };
 
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
-const HEADER_SAFE = /^[\x21-\x7e]+$/;
 
 export function hostOrigin(value: string): string | null {
   const text = value.trim();
@@ -32,7 +32,7 @@ export function envCredential(origin: string, context: ConfigContext): Credentia
   registerSecret(key);
   if (key.startsWith("sgt_")) return skip("SKILLSGIST_INSTALL_KEY holds a publish API token, not an install key");
   if (key.startsWith("sgd_")) return skip("SKILLSGIST_INSTALL_KEY holds a sign-in token, not an install key (use skillsgist login instead)");
-  if (!HEADER_SAFE.test(key)) return skip("SKILLSGIST_INSTALL_KEY has spaces or characters a header cannot carry");
+  if (!isToken(key)) return skip("SKILLSGIST_INSTALL_KEY has spaces or characters a header cannot carry, or is too long");
   const host = context.env.SKILLSGIST_HOST?.trim() ?? "";
   if (host === "") return skip("SKILLSGIST_HOST is not set, so the install key is not bound to any registry");
   const bound = hostOrigin(host);
@@ -47,9 +47,9 @@ export function resolveCredential(origin: string, context: ConfigContext): Crede
   const login = getLogin(context, origin);
   if (login === null) return { kind: "none" };
   registerSecret(login.token);
-  return { kind: "login", token: login.token, user: login.user, projects: login.projects };
+  return { kind: "login", token: login.token };
 }
 
 export function authHeaders(credential: Credential): Record<string, string> {
-  return credential.kind === "none" ? {} : { authorization: `Bearer ${credential.token}` };
+  return credential.kind === "none" ? {} : bearer(credential.token);
 }

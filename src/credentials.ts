@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { CliError, errorMessage } from "./errors.js";
+import { isToken } from "./http.js";
 
 export interface ConfigContext {
   home: string;
@@ -58,8 +59,7 @@ function isLogin(value: unknown): value is HostLogin {
     typeof login === "object" &&
     typeof login.user === "string" &&
     typeof login.token === "string" &&
-    login.token !== "" &&
-    /^[\x21-\x7e]+$/.test(login.token) &&
+    isToken(login.token) &&
     typeof login.createdAt === "string" &&
     Array.isArray(login.projects) &&
     login.projects.every((project) => typeof project === "string")

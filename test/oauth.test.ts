@@ -115,24 +115,31 @@ describe("requestDeviceCode", () => {
 });
 
 describe("pollForToken", () => {
-  it("waits while approval is pending, then returns the token and the granted projects", async () => {
+  it("waits while approval is pending, then returns the token", async () => {
     const { meta, device } = await started({ pendingPolls: 2, interval: 1, projects: ["team", "docs"] });
     const clock = fastClock();
-    expect(await pollForToken(meta, device, clock.options)).toEqual({ token: LOGIN_TOKEN, projects: ["team", "docs"] });
+    expect(await pollForToken(meta, device, clock.options)).toEqual({ token: LOGIN_TOKEN });
     expect(clock.sleeps).toEqual([1000, 1000, 1000]);
   });
 
   it("never polls faster than once a second, even if the registry asks for interval 0", async () => {
     const { meta, device } = await started({ pendingPolls: 2 });
     const clock = fastClock();
-    expect(await pollForToken(meta, device, clock.options)).toEqual({ token: LOGIN_TOKEN, projects: ["team"] });
+    expect(await pollForToken(meta, device, clock.options)).toEqual({ token: LOGIN_TOKEN });
     expect(clock.sleeps).toEqual([1000, 1000, 1000]);
   });
 
+  it("never waits more than a minute between polls, even if the registry asks for a huge interval", async () => {
+    const { meta, device } = await started({ pendingPolls: 2, interval: 1e7 });
+    const clock = fastClock();
+    expect(await pollForToken(meta, device, clock.options)).toEqual({ token: LOGIN_TOKEN });
+    expect(clock.sleeps).toEqual([60000, 60000, 60000]);
+  });
+
   it("caps the deadline so a huge expires_in cannot poll forever", async () => {
-    const { auth, meta, device } = await started({ expiresIn: 1e9, pendingPolls: 100000, interval: 600 });
+    const { auth, meta, device } = await started({ expiresIn: 1e9, pendingPolls: 100000, interval: 60 });
     expect(await failure(pollForToken(meta, device, fastClock().options))).toBe("The sign-in code expired. Run skillsgist login again.");
-    expect(auth.tokenPolls).toBe(2);
+    expect(auth.tokenPolls).toBe(29);
   });
 
   it("waits five seconds longer each time it is told to slow down", async () => {
@@ -140,6 +147,13 @@ describe("pollForToken", () => {
     const clock = fastClock();
     await pollForToken(meta, device, clock.options);
     expect(clock.sleeps).toEqual([1000, 6000, 6000]);
+  });
+
+  it("does not slow down past a minute between polls", async () => {
+    const { meta, device } = await started({ pendingPolls: 2, slowDownOnPoll: 1, interval: 60 });
+    const clock = fastClock();
+    await pollForToken(meta, device, clock.options);
+    expect(clock.sleeps).toEqual([60000, 60000, 60000]);
   });
 
   it.each([
@@ -193,7 +207,7 @@ describe("whoami", () => {
   it("says whom a token belongs to", async () => {
     const { meta, device } = await started({ projects: ["team"] });
     const { token } = await pollForToken(meta, device, fastClock().options);
-    expect(await whoami(registry.origin, token)).toEqual({ user: "alice", kind: "login", projects: ["team"] });
+    expect(await whoami(registry.origin, token)).toEqual({ user: "alice", projects: ["team"] });
     expect(registry.log.at(-1)?.headers.authorization).toBe(`Bearer ${LOGIN_TOKEN}`);
   });
 

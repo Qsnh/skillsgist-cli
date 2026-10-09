@@ -558,6 +558,22 @@ describe("runAdd with credentials", () => {
     );
   });
 
+  it("does not offer to sign in at an address with no skills index", async () => {
+    const box = sandbox();
+    const ui = fakeUi();
+    await expect(runAdd(`${registry.origin}/p/missing`, options(), box.context(ui.ui))).rejects.toThrow(`No skills found at ${registry.origin}/p/missing`);
+    expect(ui.asked).toEqual([]);
+  });
+
+  it("does not offer to sign in when the credentials file is broken", async () => {
+    const box = sandbox();
+    mkdirSync(join(box.home, ".config/skillsgist"), { recursive: true });
+    writeFileSync(join(box.home, ".config/skillsgist/credentials.json"), "{");
+    const ui = fakeUi();
+    await expect(runAdd(secret(), options(), box.context(ui.ui))).rejects.toThrow(`No skills found at ${secret()}`);
+    expect(ui.asked).toEqual([]);
+  });
+
   it("keeps installing public skills when the credentials file is broken", async () => {
     const box = sandbox();
     mkdirSync(join(box.home, ".config/skillsgist"), { recursive: true });

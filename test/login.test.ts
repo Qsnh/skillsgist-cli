@@ -266,6 +266,13 @@ describe("runWhoami", () => {
     expect(box.ui.text()).toContain("SKILLSGIST_INSTALL_KEY is set, but SKILLSGIST_HOST does not name a registry, so the key is never sent");
   });
 
+  it("says why an install key bound to a registry is not sent", async () => {
+    const box = account({ env: { SKILLSGIST_INSTALL_KEY: "sgt_0123456789abcdef", SKILLSGIST_HOST: registry.origin } });
+    expect(await runWhoami(null, box.context)).toBe(1);
+    expect(box.ui.text()).toContain("warn: SKILLSGIST_INSTALL_KEY holds a publish API token, not an install key; not sending SKILLSGIST_INSTALL_KEY");
+    expect(box.ui.text()).toContain(`${registry.origin}: not signed in`);
+  });
+
   it("puts the unbound-key warning before the per-host lines when something else is signed in", async () => {
     installFakeAuth(registry);
     const box = account({ env: { SKILLSGIST_INSTALL_KEY: INSTALL_KEY } });

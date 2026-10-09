@@ -3,6 +3,7 @@ import { redact } from "./source.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
+const TOKEN = /^[\x21-\x7e]{1,4096}$/;
 
 export interface FetchOptions {
   timeoutMs?: number;
@@ -36,6 +37,15 @@ export class AuthError extends CliError {
     super(`${redact(url)} answered HTTP ${status}`);
     this.name = "AuthError";
   }
+}
+
+// Whether a token can go in an Authorization header: visible ASCII, no spaces, at most 4 KiB.
+export function isToken(value: string): boolean {
+  return TOKEN.test(value);
+}
+
+export function bearer(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}` };
 }
 
 function reason(err: unknown): string {

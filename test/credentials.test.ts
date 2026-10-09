@@ -104,6 +104,11 @@ describe("sign-ins on disk", () => {
     ["__proto__ as a host", `{"version":1,"hosts":{"__proto__":${JSON.stringify(login())}}}`, "has an entry skillsgist cannot read"],
     ["a token that is not a string", JSON.stringify({ version: 1, hosts: { [ORIGIN]: { ...login(), token: 5 } } }), "has an entry skillsgist cannot read"],
     [
+      "a token too long for a header",
+      JSON.stringify({ version: 1, hosts: { [ORIGIN]: { ...login(), token: `sgd_${"0".repeat(4096)}` } } }),
+      "has an entry skillsgist cannot read",
+    ],
+    [
       "a token with a newline",
       JSON.stringify({ version: 1, hosts: { [ORIGIN]: { ...login(), token: "sgd_bad\ntoken0000" } } }),
       "has an entry skillsgist cannot read",

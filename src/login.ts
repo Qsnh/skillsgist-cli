@@ -147,11 +147,12 @@ export async function runWhoami(url: string | null, context: AccountContext): Pr
   const config = configOf(context);
   let origins: string[];
   let unbound = false;
+  let envHost: string | null = null;
   if (url !== null) {
     origins = [parseSource(url).origin];
   } else {
     const key = context.env.SKILLSGIST_INSTALL_KEY?.trim() ?? "";
-    const envHost = key === "" ? null : hostOrigin(context.env.SKILLSGIST_HOST ?? "");
+    envHost = key === "" ? null : hostOrigin(context.env.SKILLSGIST_HOST ?? "");
     unbound = key !== "" && envHost === null;
     origins = [...new Set([...Object.keys(readCredentials(config).hosts), ...(envHost === null ? [] : [envHost])])];
   }
@@ -159,10 +160,12 @@ export async function runWhoami(url: string | null, context: AccountContext): Pr
     ui.info(unbound ? `${UNBOUND_KEY}\nNot signed in. Run: npx skillsgist login <url>` : "Not signed in. Run: npx skillsgist login <url>");
     return 1;
   }
-  const lookup: ConfigContext = url === null ? { ...config, warn: undefined } : config;
   const lines: string[] = unbound ? [UNBOUND_KEY] : [];
   let failed = false;
   for (const origin of origins) {
+    // Only the registry SKILLSGIST_HOST names explains a skipped install key; for every other
+    // saved sign-in, "SKILLSGIST_HOST does not name it" would just be noise.
+    const lookup: ConfigContext = url === null && origin !== envHost ? { ...config, warn: undefined } : config;
     const credential = resolveCredential(origin, lookup);
     if (credential.kind === "none") {
       failed = true;

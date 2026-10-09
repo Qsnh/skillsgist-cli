@@ -245,13 +245,15 @@ function loginCommand(source: Source): string {
   return `npx skillsgist login ${signInUrl(source)}`;
 }
 
-function credentialFor(source: Source, context: AddContext): Credential {
+// Null when the credentials file cannot be read: add goes on without a sign-in, and must not
+// offer one, since signing in would fail on the same file.
+function credentialFor(source: Source, context: AddContext): Credential | null {
   try {
     return resolveCredential(source.origin, configOf(context));
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
     context.ui.warn(`${err.message} Continuing without signing in.`);
-    return { kind: "none" };
+    return null;
   }
 }
 
@@ -273,17 +275,19 @@ function explain(err: AuthError, credential: Credential, source: Source): CliErr
   return err;
 }
 
-async function offerSignIn(question: string, source: Source, context: AddContext, yes: boolean): Promise<Credential | null> {
-  if (yes || !context.interactive) return null;
+async function offerSignIn(question: string, source: Source, context: AddContext, mayAsk: boolean): Promise<Credential | null> {
+  if (!mayAsk || !context.interactive) return null;
   const answer = await context.ui.confirm(question);
   if (answer === CANCELLED || !answer) return null;
   const login = await signIn(source, context, { browser: true });
-  return { kind: "login", token: login.token, user: login.user, projects: login.projects };
+  return { kind: "login", token: login.token };
 }
 
 async function loadIndex(source: Source, context: AddContext, yes: boolean): Promise<Loaded> {
   const host = hostOf(source.origin);
-  let credential = credentialFor(source, context);
+  const saved = credentialFor(source, context);
+  const mayAsk = !yes && saved !== null;
+  let credential: Credential = saved ?? { kind: "none" };
   if (credential.kind === "none" && source.project !== null) {
     context.ui.info(`Public skills only. To include private ones, run: ${loginCommand(source)}`);
   }
@@ -300,13 +304,14 @@ async function loadIndex(source: Source, context: AddContext, yes: boolean): Pro
           : credential.kind === "none"
             ? `${host} asks you to sign in. Sign in now?`
             : `Your sign-in to ${host} has expired. Sign in again now?`;
-      const next = fixable ? await offerSignIn(question, source, context, yes) : null;
+      const next = fixable ? await offerSignIn(question, source, context, mayAsk) : null;
       if (next === null) throw explain(err, credential, source);
       credential = next;
       continue;
     }
-    if ((index !== null && index.skills.length > 0) || credential.kind !== "none" || retried) return { index, credential };
-    const next = await offerSignIn(`No public skills at ${source.display}. Sign in to ${host} to see private ones?`, source, context, yes);
+    // A null index means neither index URL exists: the address is not a registry, so signing in would not help.
+    if (index === null || index.skills.length > 0 || credential.kind !== "none" || retried) return { index, credential };
+    const next = await offerSignIn(`No public skills at ${source.display}. Sign in to ${host} to see private ones?`, source, context, mayAsk);
     if (next === null) return { index, credential };
     credential = next;
   }

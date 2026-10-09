@@ -73,10 +73,16 @@ describe("resolveCredential", () => {
     expect(warnings[0]).toContain(why);
   });
 
+  it("never sends an install key too long for a header", () => {
+    const { context, warnings } = setup({ SKILLSGIST_INSTALL_KEY: `sgi_${"0".repeat(4096)}`, SKILLSGIST_HOST: ORIGIN });
+    expect(resolveCredential(ORIGIN, context)).toEqual({ kind: "none" });
+    expect(warnings[0]).toContain("or is too long");
+  });
+
   it("uses the saved sign-in of this registry when no install key is set", () => {
     const { context } = setup({});
     saveLogin(context, ORIGIN, saved);
-    expect(resolveCredential(ORIGIN, context)).toEqual({ kind: "login", token: LOGIN_TOKEN, user: "alice", projects: ["team"] });
+    expect(resolveCredential(ORIGIN, context)).toEqual({ kind: "login", token: LOGIN_TOKEN });
     expect(resolveCredential("https://other.example", context)).toEqual({ kind: "none" });
   });
 
