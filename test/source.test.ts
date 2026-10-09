@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { maskKey, parseSource, redact } from "../src/source.js";
+import { keyInUrl, maskKey, parseSource, redact, registerSecret } from "../src/source.js";
 
 const KEY = "0123456789abcdef0123456789abcdef";
 const OTHER = "fedcba9876543210fedcba9876543210";
@@ -18,46 +18,54 @@ describe("parseSource", () => {
     expect(parseSource("https://skills.example.com")).toEqual({
       origin: "https://skills.example.com",
       base: "",
-      key: null,
+      project: null,
       display: "https://skills.example.com",
     });
   });
 
-  it("keeps a project path and drops a trailing slash, query and fragment", () => {
-    expect(parseSource("https://skills.example.com/p/team/?x=1#top")).toMatchObject({
+  it("keeps a project path, reads the project, and drops a trailing slash, query and fragment", () => {
+    expect(parseSource("https://skills.example.com/p/team/?x=1#top")).toEqual({
+      origin: "https://skills.example.com",
       base: "/p/team",
-      key: null,
+      project: "team",
       display: "https://skills.example.com/p/team",
     });
   });
 
-  it("extracts the install key and masks it in the display form", () => {
-    expect(parseSource(`https://skills.example.com/i/${KEY}/`)).toEqual({
-      origin: "https://skills.example.com",
-      base: `/i/${KEY}`,
-      key: KEY,
-      display: "https://skills.example.com/i/0123…",
-    });
+  it("reads the project of a single-skill address", () => {
+    const source = parseSource("https://skills.example.com/p/team/.well-known/agent-skills/demo-skill");
+    expect(source.project).toBe("team");
+    expect(source.base).toBe("/p/team/.well-known/agent-skills/demo-skill");
   });
 
-  it("keeps the single-skill path under a key", () => {
-    const source = parseSource(`https://skills.example.com/i/${KEY}/.well-known/agent-skills/demo-skill`);
-    expect(source.base).toBe(`/i/${KEY}/.well-known/agent-skills/demo-skill`);
-    expect(source.display).toBe("https://skills.example.com/i/0123…/.well-known/agent-skills/demo-skill");
+  it("decodes an escaped project name", () => {
+    expect(parseSource("https://skills.example.com/p/my%2Dteam").project).toBe("my-team");
   });
 
-  it.each([`https://skills.example.com//i/${KEY}`, `https://skills.example.com/i//${KEY}/`, `https://skills.example.com/%69/${KEY}`])(
-    "registers the key of %s and masks it everywhere",
-    (url) => {
-      const source = parseSource(url);
-      expect(source.key).toBe(KEY);
-      expect(source.display).not.toContain(KEY);
-      expect(redact(`No skills found at ${url}`)).not.toContain(KEY);
-    },
-  );
+  it("has no project for a path that is not /p/<project>", () => {
+    expect(parseSource("https://skills.example.com/team").project).toBeNull();
+    expect(parseSource("https://skills.example.com/p").project).toBeNull();
+  });
+
+  it.each([
+    `https://skills.example.com/i/${KEY}`,
+    `https://skills.example.com//i/${KEY}/`,
+    `https://skills.example.com/i//${KEY}`,
+    `https://skills.example.com/%69/${KEY}/.well-known/agent-skills/demo-skill`,
+  ])("refuses the install-key address %s without echoing the key", (url) => {
+    const message = failure(() => parseSource(url));
+    expect(message).toBe(keyInUrl("https://skills.example.com"));
+    expect(message).not.toContain(KEY);
+  });
+
+  it("says where to go instead of an install-key address", () => {
+    expect(keyInUrl("https://skills.example.com")).toBe(
+      "Install keys no longer go in the URL. Use the address on the project page (https://skills.example.com/p/<project>) and sign in with: npx skillsgist login https://skills.example.com. In CI, set SKILLSGIST_HOST and SKILLSGIST_INSTALL_KEY instead.",
+    );
+  });
 
   it("collapses repeated slashes in the base", () => {
-    expect(parseSource(`https://skills.example.com//i//${KEY}//`).base).toBe(`/i/${KEY}`);
+    expect(parseSource("https://skills.example.com//p//team//").base).toBe("/p/team");
   });
 
   it.each(["http://localhost:8787", "http://127.0.0.1:8787/p/team", "http://[::1]:8080"])(
@@ -89,12 +97,29 @@ describe("parseSource", () => {
 });
 
 describe("redact", () => {
-  it("masks a parsed key wherever it appears", () => {
-    parseSource(`https://skills.example.com/i/${KEY}`);
+  it("masks a registered secret wherever it appears", () => {
+    registerSecret(KEY);
     expect(redact(`boom ${KEY} boom`)).toBe("boom 0123… boom");
   });
 
-  it("masks any /i/ segment even when no key was parsed", () => {
+  it("does not register a secret too short to mask safely", () => {
+    registerSecret("abc");
+    expect(redact("abcdef")).toBe("abcdef");
+  });
+
+  it.each([
+    ["sgd_fedcba9876543210", "sgd_…"],
+    ["Authorization: Bearer sgi_0123456789abcdef", "Authorization: Bearer sgi_…"],
+    ["token=sgt_AbC-dEf_0123", "token=sgt_…"],
+  ])("masks the prefixed token in %s", (text, masked) => {
+    expect(redact(text)).toBe(masked);
+  });
+
+  it.each(["sgd_short", "xsgd_0123456789abcdef", "my_sgd_0123456789abcdef"])("leaves %s alone", (text) => {
+    expect(redact(text)).toBe(text);
+  });
+
+  it("masks any /i/ segment even when no key was registered", () => {
     expect(redact(`https://h.example/i/${OTHER}/d/x/1.zip`)).toBe("https://h.example/i/fedc…/d/x/1.zip");
   });
 
@@ -120,7 +145,7 @@ describe("redact", () => {
   });
 
   it("is idempotent", () => {
-    const once = redact(`https://h.example/i/${OTHER}`);
+    const once = redact(`https://h.example/i/${OTHER} sgd_0123456789abcdef`);
     expect(redact(once)).toBe(once);
   });
 });

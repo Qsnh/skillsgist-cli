@@ -3,20 +3,25 @@ import { CliError } from "./errors.js";
 export interface Source {
   origin: string;
   base: string;
-  key: string | null;
+  project: string | null;
   display: string;
 }
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const FIRST_TWO_SEGMENTS = /^\/([^/]+)\/([^/]+)/;
 const ANY_KEY_SEGMENT =
   /(?<![\w.~/\\-])((?:[a-z][a-z0-9+.-]*:\/\/[^\s/?#"'`<>]+|\[[0-9a-f:.]+\]|localhost|[a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::\d+)?\/+i\/+)([^/\s?#"'`<>]+)/gi;
-const MIN_REGISTERED_KEY = 8;
+const PREFIXED_TOKEN = /(?<![A-Za-z0-9_])(sg[dit]_)[A-Za-z0-9_-]{8,}/g;
+const MIN_SECRET = 8;
 const UNPRINTABLE = /[\p{Cc}\u202a-\u202e\u2066-\u2069]/gu;
-const knownKeys = new Set<string>();
+const secrets = new Set<string>();
 
 export function maskKey(key: string): string {
-  return key.length > MIN_REGISTERED_KEY ? `${key.slice(0, 4)}…` : "…";
+  return key.length > MIN_SECRET ? `${key.slice(0, 4)}…` : "…";
+}
+
+export function registerSecret(secret: string): void {
+  if (secret.length >= MIN_SECRET) secrets.add(secret);
 }
 
 export function printable(text: string): string {
@@ -29,7 +34,8 @@ export function oneLine(text: string): string {
 
 export function redact(text: string): string {
   let out = text;
-  for (const key of knownKeys) out = out.split(key).join(maskKey(key));
+  for (const secret of secrets) out = out.split(secret).join(maskKey(secret));
+  out = out.replace(PREFIXED_TOKEN, "$1…");
   return out.replace(ANY_KEY_SEGMENT, (match, prefix: string, segment: string) => (segment.endsWith("…") ? match : `${prefix}${maskKey(segment)}`));
 }
 
@@ -49,8 +55,8 @@ function decoded(segment: string): string {
   }
 }
 
-function remember(key: string): void {
-  for (const form of [key, decoded(key)]) if (form.length >= MIN_REGISTERED_KEY) knownKeys.add(form);
+export function keyInUrl(origin: string): string {
+  return `Install keys no longer go in the URL. Use the address on the project page (${origin}/p/<project>) and sign in with: npx skillsgist login ${origin}. In CI, set SKILLSGIST_HOST and SKILLSGIST_INSTALL_KEY instead.`;
 }
 
 export function parseSource(input: string): Source {
@@ -60,10 +66,6 @@ export function parseSource(input: string): Source {
   } catch {
     throw new CliError(`Not a valid URL: ${redact(input)}`, { showUsage: true });
   }
-  const path = url.pathname.replace(/\/{2,}/g, "/");
-  const segments = FIRST_TWO_SEGMENTS.exec(path);
-  const key = segments !== null && decoded(segments[1]) === "i" ? segments[2] : null;
-  if (key !== null) remember(key);
   if (url.protocol === "http:" && !LOOPBACK_HOSTS.has(url.hostname)) {
     throw new CliError(`Refusing plain http to ${url.hostname}: use https`);
   }
@@ -73,6 +75,11 @@ export function parseSource(input: string): Source {
   if (url.username !== "" || url.password !== "") {
     throw new CliError("Refusing a URL with a username or password in it");
   }
+  const path = url.pathname.replace(/\/{2,}/g, "/");
+  const segments = FIRST_TWO_SEGMENTS.exec(path);
+  const first = segments === null ? null : decoded(segments[1]);
+  if (first === "i") throw new CliError(keyInUrl(url.origin));
   const base = path.replace(/\/+$/, "");
-  return { origin: url.origin, base, key, display: redact(`${url.origin}${base}`) };
+  const project = segments !== null && first === "p" ? decoded(segments[2]) : null;
+  return { origin: url.origin, base, project, display: redact(`${url.origin}${base}`) };
 }

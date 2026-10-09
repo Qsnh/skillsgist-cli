@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { CliError } from "./errors.js";
+import { authFailure, discard, readCapped, readJson, request, type FetchOptions } from "./http.js";
 import { printable, redact, type Source } from "./source.js";
+
+export type { FetchOptions } from "./http.js";
 
 export const DISCOVERY_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json";
 export const MAX_INDEX_BYTES = 10 * 1024 * 1024;
@@ -8,7 +11,6 @@ export const MAX_ARTIFACT_BYTES = 50 * 1024 * 1024;
 
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
-const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface SkillEntry {
   name: string;
@@ -22,87 +24,11 @@ export interface Index {
   warnings: string[];
 }
 
-export interface FetchOptions {
-  timeoutMs?: number;
-  signal?: AbortSignal;
-}
-
-interface Watchdog {
-  signal: AbortSignal;
-  reset(): void;
-  stop(): void;
-}
-
-interface Reply {
-  res: Response;
-  watchdog: Watchdog;
-}
-
 export function indexCandidates(source: Source): string[] {
   return [
     `${source.origin}${source.base}/.well-known/agent-skills/index.json`,
     `${source.origin}${source.base}/.well-known/skills/index.json`,
   ];
-}
-
-function reason(err: unknown): string {
-  if (err instanceof Error && err.name === "TimeoutError") return "timed out";
-  const cause = err instanceof Error ? (err.cause as { code?: string; message?: string } | undefined) : undefined;
-  return cause?.code ?? cause?.message ?? (err instanceof Error ? err.message : String(err));
-}
-
-function watchdog(ms: number): Watchdog {
-  const controller = new AbortController();
-  let timer: NodeJS.Timeout | undefined;
-  const reset = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => controller.abort(new DOMException("The operation timed out.", "TimeoutError")), ms).unref();
-  };
-  reset();
-  return { signal: controller.signal, reset, stop: () => clearTimeout(timer) };
-}
-
-async function request(url: string, options: FetchOptions): Promise<Reply> {
-  const dog = watchdog(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-  const signal = options.signal ? AbortSignal.any([dog.signal, options.signal]) : dog.signal;
-  try {
-    const res = await fetch(url, { redirect: "error", signal });
-    dog.reset();
-    return { res, watchdog: dog };
-  } catch (err) {
-    dog.stop();
-    throw new CliError(`Could not reach ${redact(url)}: ${redact(reason(err))}`);
-  }
-}
-
-async function discard({ res, watchdog }: Reply): Promise<void> {
-  watchdog.stop();
-  await res.body?.cancel();
-}
-
-async function readCapped({ res, watchdog }: Reply, limit: number, label: string, failure: string): Promise<Uint8Array> {
-  try {
-    if (Number(res.headers.get("content-length") ?? 0) > limit) {
-      await res.body?.cancel();
-      throw new CliError(`${label} is larger than ${limit} bytes`);
-    }
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    if (res.body) {
-      for await (const chunk of res.body) {
-        watchdog.reset();
-        total += chunk.length;
-        if (total > limit) throw new CliError(`${label} is larger than ${limit} bytes`);
-        chunks.push(chunk);
-      }
-    }
-    return Buffer.concat(chunks, total);
-  } catch (err) {
-    if (err instanceof CliError) throw err;
-    throw new CliError(`${failure}: ${redact(reason(err))}`);
-  } finally {
-    watchdog.stop();
-  }
 }
 
 export async function fetchIndex(source: Source, options: FetchOptions = {}): Promise<Index | null> {
@@ -112,18 +38,12 @@ export async function fetchIndex(source: Source, options: FetchOptions = {}): Pr
       await discard(reply);
       continue;
     }
+    if (reply.res.status === 401 || reply.res.status === 403) throw await authFailure(reply, url);
     if (!reply.res.ok) {
       await discard(reply);
       throw new CliError(`${redact(url)} answered HTTP ${reply.res.status}`);
     }
-    const bytes = await readCapped(reply, MAX_INDEX_BYTES, redact(url), `Could not reach ${redact(url)}`);
-    let body: unknown;
-    try {
-      body = JSON.parse(new TextDecoder().decode(bytes));
-    } catch {
-      throw new CliError(`${redact(url)} is not valid JSON`);
-    }
-    return parseIndex(body, url, source.origin);
+    return parseIndex(await readJson(reply, MAX_INDEX_BYTES, redact(url)), url, source.origin);
   }
   return null;
 }
@@ -178,6 +98,7 @@ export function parseIndex(body: unknown, indexUrl: string, origin: string): Ind
 
 export async function downloadArtifact(entry: SkillEntry, options: FetchOptions = {}): Promise<Uint8Array> {
   const reply = await request(entry.url, options);
+  if (reply.res.status === 401 || reply.res.status === 403) throw await authFailure(reply, entry.url);
   if (!reply.res.ok) {
     await discard(reply);
     throw new CliError(`Downloading ${entry.name} failed: HTTP ${reply.res.status}`);
